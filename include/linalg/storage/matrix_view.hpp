@@ -45,10 +45,10 @@ namespace linalg {
 		};
 
 
-	T at(size_t i, size_t j) const {
-		BOUNDS_CHECK(i < rows() && j < cols());
-		return Conj ? conj(data_[index(i, j)]) : data_[index(i, j)];
-	};
+		T at(size_t i, size_t j) const {
+			BOUNDS_CHECK(i < rows() && j < cols());
+			return Conj ? conj(data_[index(i, j)]) : data_[index(i, j)];
+		};
 
 		const T& operator()(size_t i, size_t j) const requires (!Conj) {
 			return data_[index(i, j)];
@@ -63,6 +63,37 @@ namespace linalg {
 		T& operator()(size_t i, size_t j) requires (Mutable && !Conj) {
 			return data_[index(i, j)];
 		};
+
+		// Assignment from any matrix expression for mutable, non-conjugate views.
+        template<typename E>
+        MatrixView& operator=(const MatExpr<E>& expr) requires (Mutable && !Conj) {
+            const auto& e = expr.self();
+            BOUNDS_CHECK(rows() == e.rows() && cols() == e.cols());
+            const bool dep = e.depends_on(static_cast<const void*>(data_), memory_span());
+            if (dep) {
+                // Materialise into a temporary to break the aliasing cycle
+                std::vector<T> temp(rows() * cols());
+                size_t k = 0;
+                for (size_t i = 0; i < rows(); ++i)
+                    for (size_t j = 0; j < cols(); ++j)
+                        temp[k++] = static_cast<T>(e(i, j));
+                k = 0;
+                for (size_t i = 0; i < rows(); ++i)
+                    for (size_t j = 0; j < cols(); ++j)
+                        (*this)(i, j) = temp[k++];
+            } else {
+                for (size_t i = 0; i < rows(); ++i)
+                    for (size_t j = 0; j < cols(); ++j)
+                        (*this)(i, j) = static_cast<T>(e(i, j));
+            };
+            return *this;
+        };
+
+		// Homogeneous copy between views of any Trans/Conj combination
+		template<bool T2, bool C2, bool M2>
+        MatrixView& operator=(const MatrixView<T, L, T2, C2, M2>& other) requires (Mutable && !Conj) {
+            return *this = static_cast<const MatExpr<MatrixView<T, L, T2, C2, M2>>&>(other);
+        };
 
         // Aliasing detection
 		bool depends_on(const void* p, size_t bytes) const {

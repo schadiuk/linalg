@@ -37,9 +37,8 @@ namespace linalg {
         // Constructor from a given view
         template<bool Trans, bool Conj, bool Mutable>
         Matrix(const MatrixView<T, L, Trans, Conj, Mutable>& view) : rows_(view.rows()), cols_(view.cols()), stride_(L == Layout::RowMajor ? view.cols() : view.rows()),
-            data_(view.rows()* view.cols()) {
-            //*this = expr(view);
-            *this = view;
+            data_(view.rows() * view.cols()) {
+            *this = expr(view);
         };
 
         // Constructor from std::array

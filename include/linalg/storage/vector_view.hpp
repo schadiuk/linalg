@@ -81,7 +81,7 @@ namespace linalg {
         Ptr data_;
         size_t size_, stride_;
     
-        template<typename U> friend struct VecViewRef;
+        template<typename U, bool M> friend struct VecViewRef;
     };
  
     template<typename T>

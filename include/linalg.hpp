@@ -9,11 +9,16 @@
 #include <linalg/storage/vector_view.hpp>
 #include <linalg/storage/matrix_view.hpp>
 
+#include <linalg/expressions/expr_base.hpp>
+#include <linalg/expressions/vector_expr.hpp>
+#include <linalg/expressions/matrix_expr.hpp>
+
 #include <string>
 #include <sstream>
 #include <iomanip>
 
 namespace linalg {
+    // Formatter
     struct IOFormat {
         int precision = 3;
         bool scientific = false;
