@@ -193,9 +193,9 @@ namespace linalg {
             offset += count;
         };
 
-        for (auto& f : futures) { f.get(); }
+        for (auto& f : futures) { f.get(); };
         Type total_sum = Type(0);
-        for (const auto& p : partials) { total_sum += p.value; }
+        for (const auto& p : partials) { total_sum += p.value; };
         return total_sum;
     };
 
