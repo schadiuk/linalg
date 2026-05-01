@@ -1,7 +1,7 @@
 #pragma once
 
-#include <linalg/expressions/matrix_expr.hpp>
-#include <linalg/expressions/vector_expr.hpp>
+#include <linalg/storage/matrix.hpp>
+#include <linalg/storage/vector.hpp>
 
 namespace linalg {
     // Applies a unary fuction elementwise
