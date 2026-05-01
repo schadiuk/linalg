@@ -13,6 +13,9 @@
 #include <linalg/expressions/vector_expr.hpp>
 #include <linalg/expressions/matrix_expr.hpp>
 
+#include <linalg/operations/vector_ops.hpp>
+#include <linalg/operations/matrix_ops.hpp>
+
 #include <string>
 #include <sstream>
 #include <iomanip>
