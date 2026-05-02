@@ -16,6 +16,10 @@
 #include <linalg/operations/vector_ops.hpp>
 #include <linalg/operations/matrix_ops.hpp>
 
+#include <linalg/blas/level1.hpp>
+#include <linalg/blas/level2.hpp>
+#include <linalg/blas/level3.hpp>
+
 #include <string>
 #include <sstream>
 #include <iomanip>
