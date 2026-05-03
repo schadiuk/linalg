@@ -69,7 +69,7 @@ namespace linalg {
                 // Serial (alas!) over columns to avoid concurrent y[i] updates
                 for (size_t j = 0; j < N; ++j) {
                     const T* a_col = A + j * lda;
-                    const T  xj   = alpha * x[j * incx];
+                    const T xj = alpha * x[j * incx];
                     for (size_t i = 0; i < M; ++i) y[i] += a_col[i] * xj;
                 };
             };
@@ -86,7 +86,7 @@ namespace linalg {
             else { x_tmp = materialise<T>(x_expr); x_ptr = x_tmp.data(); incx = 1; };
             // Try to get raw A pointer
             const T* a_ptr = nullptr;
-            size_t   lda   = 0;
+            size_t lda   = 0;
             if constexpr (std::is_same_v<EM, Matrix<T, L>>) {
                 a_ptr = a_expr.self().data();
                 lda = a_expr.self().stride();
@@ -129,5 +129,135 @@ namespace linalg {
         if (M == 0 || N == 0) return;
         // VectorView with unit stride: data() gives a contiguous T*
         detail::gemv_impl<T, L>(alpha, A, x, beta, const_cast<T*>(y.data()), M, N);
+    };
+
+    namespace detail {
+        template<typename T, Layout L, typename EX, typename EY>
+        void ger_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr,
+                    T* A_ptr, size_t lda, size_t M, size_t N) {
+            // Materialise x and y to avoid repeated expression traversal
+            const Vector<T> xv = materialise<T>(x_expr);
+            const Vector<T> yv = materialise<T>(y_expr);
+            const T* xp = xv.data();
+            const T* yp = yv.data();
+            parallel_for(M, PARALLEL_THRESHOLD_COMPUTE,
+                    [=](size_t rs, size_t re) {
+                for (size_t i = rs; i < re; ++i) {
+                    const T xi = alpha * xp[i];
+                    if constexpr (L == Layout::RowMajor) {
+                        T* a_row = A_ptr + i * lda;
+                        size_t j = 0;
+                        // 4-wide loop unroll
+                        for (; j + 4 <= N; j += 4) {
+                            a_row[j] += xi * yp[j];
+                            a_row[j+1] += xi * yp[j+1];
+                            a_row[j+2] += xi * yp[j+2];
+                            a_row[j+3] += xi * yp[j+3];
+                        }
+                        for (; j < N; ++j) a_row[j] += xi * yp[j];
+                    } else {
+                        // ColMajor: each y[j] column is contiguous
+                        for (size_t j = 0; j < N; ++j) A_ptr[j * lda + i] += xi * yp[j];
+                    };
+                };
+            });
+        };
+
+        template<typename T, Layout L, typename EX, typename EY>
+        void gerc_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr,
+                    T* A_ptr, size_t lda, size_t M, size_t N) {
+            const Vector<T> xv = detail::materialise<T>(x_expr);
+            Vector<T> yv = detail::materialise<T>(y_expr);
+            // Conjugate y in place
+            for (size_t j = 0; j < N; ++j) yv[j] = conj(yv[j]);
+            const T* xp = xv.data();
+            const T* yp = yv.data();
+            parallel_for(M, PARALLEL_THRESHOLD_COMPUTE,
+                    [=](size_t rs, size_t re) {
+                for (size_t i = rs; i < re; ++i) {
+                    const T xi = alpha * xp[i];
+                    if constexpr (L == Layout::RowMajor) {
+                        T* a_row = A_ptr + i * lda;
+                        size_t j = 0;
+                        for (; j + 4 <= N; j += 4) {
+                            a_row[j] += xi * yp[j];
+                            a_row[j+1] += xi * yp[j+1];
+                            a_row[j+2] += xi * yp[j+2];
+                            a_row[j+3] += xi * yp[j+3];
+                        }
+                        for (; j < N; ++j) a_row[j] += xi * yp[j];
+                    } else {
+                        for (size_t j = 0; j < N; ++j)
+                            A_ptr[j * lda + i] += xi * yp[j];
+                    };
+                };
+            });
+        };
+    };
+
+    // General Rank-1 update: A = A + alpha * x * y^T (vector treated as a column)
+    template<typename T, Layout L, typename EX, typename EY>
+    void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
+        const size_t M = A.rows(), N = A.cols();
+        BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
+        if (M == 0 || N == 0) return;
+        detail::ger_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
+    };
+    
+    template<typename T, Layout L, typename EX, typename EY>
+    void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y,
+            MatrixView<T, L, false, false, true>& A) {
+        const size_t M = A.rows(), N = A.cols();
+        BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
+        if (M == 0 || N == 0) return;
+        detail::ger_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
+    };
+
+    // General Rank-1 Conjugated update: A = A + alpha * x * conj(y)^T (in-place conjugation)
+    template<typename T, Layout L, typename EX, typename EY>
+    void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
+        const size_t M = A.rows(), N = A.cols();
+        BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
+        if (M == 0 || N == 0) return;
+        detail::gerc_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
+    };
+    
+    template<typename T, Layout L, typename EX, typename EY>
+    void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y,
+            MatrixView<T, L, false, false, true>& A) {
+        const size_t M = A.rows(), N = A.cols();
+        BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
+        if (M == 0 || N == 0) return;
+        detail::gerc_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
+    };
+
+    // TRiangular SolVe: A * x = b, with result stored in x. Parameters follow BLAS convention
+    // uplo: 'U'/'L' (upper/lower triangle of A)
+    // diag: 'U'/'N' (unit/non-unit diagonal)
+    // x: Vector<T>& (in: rhs b, out: solution)
+    template<typename T, typename EM>
+    void trsv(char uplo, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
+        const auto& A  = A_expr.self();
+        const size_t N = A.rows();
+        BOUNDS_CHECK(A.cols() == N && x.size() == N);
+        if (N == 0) return;
+        const bool upper = (uplo == 'U' || uplo == 'u');
+        const bool unit  = (diag == 'U' || diag == 'u');
+        if (upper) {
+            // Backward substitution
+            for (size_t ii = 0; ii < N; ++ii) {
+                const size_t i = N - 1 - ii;
+                T sum = x[i];
+                for (size_t j = i + 1; j < N; ++j) sum -= static_cast<T>(A(i, j)) * x[j];
+                x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
+            };
+        } else {
+            // Forward substitution
+            for (size_t i = 0; i < N; ++i) {
+                T sum = x[i];
+                for (size_t j = 0; j < i; ++j) sum -= static_cast<T>(A(i, j)) * x[j];
+                x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
+            };
+        };
     };
 };
