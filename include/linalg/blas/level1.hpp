@@ -91,10 +91,9 @@ namespace linalg {
 		const T a = static_cast<T>(alpha);
 		const size_t m = A.rows();
 		const size_t n = A.cols();
-		parallel_for(m, 1, [&A, a, n](size_t rs, size_t re) {
-			for (size_t i = rs; i < re; ++i) {
+		parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&A, a, n](size_t rs, size_t re) {
+			for (size_t i = rs; i < re; ++i) 
 				for (size_t j = 0; j < n; ++j) A(i, j) *= a;
-			}
 		});
 	}
 
@@ -161,10 +160,10 @@ namespace linalg {
 		const size_t n = xx.size();
 		if (n == 0) return 0;
 		size_t max_idx = 0;
-		double max_val = std::abs(xx(0));
+		auto max_val = std::abs(xx(0));
 
 		for (size_t i = 1; i < n; ++i) {
-			double val = std::abs(xx(i));
+			auto val = std::abs(xx(i));
 			if (val > max_val) {
 				max_val = val;
 				max_idx = i;
@@ -180,10 +179,10 @@ namespace linalg {
 		const size_t n = xx.size();
 		if (n == 0) return 0;
 		size_t min_idx = 0;
-		double min_val = std::abs(xx(0));
+		auto min_val = std::abs(xx(0));
 
 		for (size_t i = 1; i < n; ++i) {
-			double val = std::abs(xx(i));
+			auto val = std::abs(xx(i));
 			if (val < min_val) {
 				min_val = val;
 				min_idx = i;
@@ -230,4 +229,149 @@ namespace linalg {
 		return parallel_reduce<T>(xx.size(), PARALLEL_THRESHOLD_REDUCE,
 			[&xx, &yy](size_t i) { return conj(xx(i)) * yy(i); });
 	};
+
+	// Euclidean norm
+	template<typename EX>
+    double nrm2(const VecExpr<EX>& x) {
+        const auto& xx = x.self();
+        const size_t n = xx.size();
+        if (n == 0) return 0.0;
+        using T = std::remove_cvref_t<decltype(xx(0))>;
+		// Overflow-safe algorithm
+        // Pass 1: find max absolute value
+        double scale = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            double a;
+            if constexpr (detail::is_complex_v<T>)
+                a = std::abs(xx(i));
+            else
+                a = std::abs(static_cast<double>(xx(i)));
+            if (a > scale) scale = a;
+        }
+        if (scale == 0.0) return 0.0;
+        // Pass 2: parallel sum of (x[i]/scale)^2
+        double ssq = parallel_reduce<double>(n, PARALLEL_THRESHOLD_REDUCE,
+            [&xx, scale](size_t i) -> double {
+                double a;
+                if constexpr (detail::is_complex_v<T>)
+                    a = std::abs(xx(i)) / scale;
+                else
+                    a = std::abs(static_cast<double>(xx(i))) / scale;
+                return a * a;
+            });
+        return scale * std::sqrt(ssq);
+    };
+
+	// Givens rotation parameters
+	// Finds (c, s) such that  [[c, s], [-s, c] ]^T * [a, b] = [r, 0]
+	// On exit: a <- r, b <- 0, c <- cos(theta), s <- sin(theta)
+	template<typename T>
+    void rotg(T& a, T& b, T& c, T& s) requires std::is_floating_point_v<T> {
+        T r = std::hypot(a, b);
+        if (r == T(0)) {
+            c = T(1); s = T(0); a = T(0); b = T(0);
+            return;
+        };
+        // Sign of r matches larger-magnitude component (minimises cancellation)
+        if (std::abs(a) >= std::abs(b)) r = std::copysign(r, a);
+        else r = std::copysign(r, b);
+        c = a / r;
+        s = b / r;
+        a = r;
+        b = T(0);
+    };
+ 
+	// Complex overload computes a unitary rotation where c is real and
+    // s is complex such that: c^2 + abs(s)^2 = 1 by convention
+    template<typename T>
+    void rotg(std::complex<T>& a, std::complex<T>& b, T& c, std::complex<T>& s) {
+        const T abs_a = std::abs(a);
+        if (abs_a == T(0)) {
+            c = T(0);
+            s = std::complex<T>(1);
+            a = b;
+            b = std::complex<T>(0);
+            return;
+        };
+        // Scale by abs_a to avoid intermediate overflow
+        const T scale = abs_a + std::abs(b);
+        const T an = std::abs(a / scale), bn = std::abs(b / scale);
+        const T r_scaled = scale * std::sqrt(an * an + bn * bn);
+        const std::complex<T> phase = a / abs_a;        // unit complex: a / abs(a)
+        c = abs_a / r_scaled;
+        s = phase * std::conj(b) / r_scaled;
+        a = phase * r_scaled;
+        b = std::complex<T>(0);
+    };
+
+	 template<typename T>
+    void rot(Vector<T>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> {
+        BOUNDS_CHECK(x.size() == y.size());
+        const size_t n = x.size();
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                T xi = x[i], yi = y[i];
+                x[i] = c * xi + s * yi;
+                y[i] = -s * xi + c * yi;
+            };
+        });
+    };
+
+    template<typename T>
+    void rot(VectorView<T, true>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
+        BOUNDS_CHECK(x.size() == y.size());
+        const size_t n = x.size();
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                T xi = x(i), yi = y(i);
+                x(i) = c * xi + s * yi;
+                y(i) = -s * xi + c * yi;
+            };
+        });
+    };
+
+    template<typename T>
+    void rot(Vector<T>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
+        BOUNDS_CHECK(x.size() == y.size());
+        const size_t n = x.size();
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                T xi = x[i], yi = y(i);
+                x[i] = c * xi + s * yi;
+                y(i) = -s * xi + c * yi;
+            };
+        });
+    };
+ 
+    template<typename T>
+    void rot(VectorView<T, true>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> { rot(y, x, c, -s); };
+ 
+    // Complex rot uses complex s and real c
+    // Applies: x[i] <- c * x[i] + s * y[i]
+    //          y[i] <- -conj(s) * x[i] + c * y[i]
+    template<typename T>
+    void rot(Vector<std::complex<T>>& x, Vector<std::complex<T>>& y, T c, std::complex<T> s) {
+        BOUNDS_CHECK(x.size() == y.size());
+        const size_t n = x.size();
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, s_conj](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                std::complex<T> xi = x[i], yi = y[i];
+                x[i] =  c * xi + s * yi;
+                y[i] = -conj(s) * xi + c * yi;
+            };
+        });
+    };
+ 
+    template<typename T>
+    void rot(VectorView<std::complex<T>, true>& x, VectorView<std::complex<T>, true>& y, T c, std::complex<T> s) {
+        BOUNDS_CHECK(x.size() == y.size());
+        const size_t n = x.size();
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, s_conj](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                std::complex<T> xi = x(i), yi = y(i);
+                x(i) = c * xi + s * yi;
+                y(i) = -conj(s) * xi + c * yi;
+            };
+        });
+    };
 };
