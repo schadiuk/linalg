@@ -4,6 +4,12 @@
 #include <linalg/storage/vector.hpp>
 
 namespace linalg {
+	namespace detail {
+		// Type trait for complex scalars
+		template<typename T> struct is_complex_impl : std::false_type {};
+        template<typename T> struct is_complex_impl<std::complex<T>> : std::true_type {};
+        template<typename T> inline constexpr bool is_complex_v = is_complex_impl<std::remove_cvref_t<T>>::value;
+	};
 	// y += alpha * x
 	template<typename Alpha, typename EX, typename T>
 	void axpy(Alpha alpha, const VecExpr<EX>& x, Vector<T>& y) {
@@ -353,7 +359,7 @@ namespace linalg {
     void rot(Vector<std::complex<T>>& x, Vector<std::complex<T>>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
-        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, s_conj](size_t rs, size_t re) {
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, conj(s)](size_t rs, size_t re) {
             for (size_t i = rs; i < re; ++i) {
                 std::complex<T> xi = x[i], yi = y[i];
                 x[i] =  c * xi + s * yi;
@@ -366,7 +372,7 @@ namespace linalg {
     void rot(VectorView<std::complex<T>, true>& x, VectorView<std::complex<T>, true>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
-        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, s_conj](size_t rs, size_t re) {
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, conj(s)](size_t rs, size_t re) {
             for (size_t i = rs; i < re; ++i) {
                 std::complex<T> xi = x(i), yi = y(i);
                 x(i) = c * xi + s * yi;
