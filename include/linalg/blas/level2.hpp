@@ -315,35 +315,62 @@ namespace linalg {
     // diag: 'U'/'N' (unit/non-unit diagonal)
     // x: Vector<T>& (in: rhs b, out: solution)
     template<typename T, typename EM>
-    void trsv(char uplo, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
-        const auto& A  = A_expr.self();
+    void trsv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
+        const auto& A = A_expr.self();
         const size_t N = A.rows();
         BOUNDS_CHECK(A.cols() == N && x.size() == N);
         if (N == 0) return;
-        const bool upper = (uplo == 'U' || uplo == 'u');
-        const bool unit  = (diag == 'U' || diag == 'u');
-        if (upper) {
-            // Backward substitution
-            for (size_t ii = 0; ii < N; ++ii) {
-                const size_t i = N - 1 - ii;
-                T sum = x[i];
-                for (size_t j = i + 1; j < N; ++j) sum -= static_cast<T>(A(i, j)) * x[j];
-                x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
-            };
+        const bool upper = (uplo  == 'U' || uplo  == 'u');
+        const bool unit = (diag  == 'U' || diag  == 'u');
+        const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
+        const bool do_conj = (trans == 'C' || trans == 'c');
+        if (!do_trans) {
+            if (upper) {
+                for (size_t ii = 0; ii < N; ++ii) {
+                    const size_t i = N - 1 - ii;
+                    T sum = x[i];
+                    for (size_t j = i + 1; j < N; ++j)
+                        sum -= static_cast<T>(A(i, j)) * x[j];
+                    x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
+                };
+            } else {
+                for (size_t i = 0; i < N; ++i) {
+                    T sum = x[i];
+                    for (size_t j = 0; j < i; ++j)
+                        sum -= static_cast<T>(A(i, j)) * x[j];
+                    x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
+                }
+            }
         } else {
-            // Forward substitution
-            for (size_t i = 0; i < N; ++i) {
-                T sum = x[i];
-                for (size_t j = 0; j < i; ++j) sum -= static_cast<T>(A(i, j)) * x[j];
-                x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
+            if (upper) {
+                // Forward pass over columns of A^T (= rows of A scanned upward)
+                for (size_t j = 0; j < N; ++j) {
+                    if (!unit)
+                        x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
+                    const T xj = x[j];
+                    for (size_t i = 0; i < j; ++i) {
+                        T aij = do_conj ? conj(static_cast<T>(A(i, j))) : static_cast<T>(A(i, j));
+                        x[i] -= aij * xj;
+                    };
+                };
+            } else {
+                for (size_t jj = 0; jj < N; ++jj) {
+                    const size_t j = N - 1 - jj;
+                    if (!unit)
+                        x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
+                    const T xj = x[j];
+                    for (size_t i = j + 1; i < N; ++i) {
+                        T aij = do_conj ? conj(static_cast<T>(A(i, j))) : static_cast<T>(A(i, j));
+                        x[i] -= aij * xj;
+                    };
+                };
             };
         };
     };
 
     namespace detail {
         template<typename T, typename EM>
-        void trmv_impl(char uplo, char trans, char diag,
-                       const MatExpr<EM>& A_expr, T* xp, size_t N) {
+        void trmv_impl(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, T* xp, size_t N) {
             const auto& A  = A_expr.self();
             const bool upper = (uplo == 'U' || uplo == 'u');
             const bool unit = (diag == 'U' || diag == 'u');
