@@ -55,7 +55,7 @@ namespace linalg {
                             c_col[i+1] += a_col[i+1] * b_kj;
                             c_col[i+2] += a_col[i+2] * b_kj;
                             c_col[i+3] += a_col[i+3] * b_kj;
-                        }
+                        };
                         for (; i < i1; ++i) c_col[i] += a_col[i] * b_kj;
                     };
                 };
@@ -72,12 +72,12 @@ namespace linalg {
             const size_t nk_blocks = (K + bs - 1) / bs;
             const size_t total_ij = ni_blocks * nj_blocks;
             auto& pool = ThreadPool::instance();
-            const size_t nthrd = std::min(pool.thread_count(), total_ij);
+            const size_t num_threads = std::min(pool.thread_count(), total_ij);
             std::vector<std::future<void>> futures;
-            futures.reserve(nthrd);
-            for (size_t t = 0; t < nthrd; ++t) {
+            futures.reserve(num_threads);
+            for (size_t t = 0; t < num_threads; ++t) {
                 futures.push_back(pool.enqueue([=]() {
-                    for (size_t blk = t; blk < total_ij; blk += nthrd) {
+                    for (size_t blk = t; blk < total_ij; blk += num_threads) {
                         const size_t ib = blk / nj_blocks;
                         const size_t jb = blk % nj_blocks;
                         const size_t i0 = ib * bs, i1 = std::min(i0 + bs, M);
@@ -165,5 +165,147 @@ namespace linalg {
         const T* bp = b_info ? b_info->data : B_tmp.data();
         size_t ldb = b_info ? b_info->lda : B_tmp.stride();
         detail::gemm_direct<T, L>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+    };
+
+    namespace detail {
+        // In-place triangular solve on a contiguous vector
+        template<typename T, typename AM>
+        void trsm_col_solve(char uplo, char trans, char diag, const AM& A, T* xp, size_t N) {
+            const bool upper = (uplo  == 'U' || uplo  == 'u');
+            const bool unit = (diag  == 'U' || diag  == 'u');
+            const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
+            const bool do_conj = (trans == 'C' || trans == 'c');
+            auto Aij = [&](size_t i, size_t j) -> T {
+                T v = static_cast<T>(A(i, j));
+                return do_conj ? conj(v) : v;
+            };
+            if (!do_trans) {
+                if (upper) {
+                    for (size_t ii = 0; ii < N; ++ii) {
+                        const size_t i = N - 1 - ii;
+                        T s = xp[i];
+                        for (size_t j = i + 1; j < N; ++j) s -= static_cast<T>(A(i, j)) * xp[j];
+                        xp[i] = unit ? s : s / static_cast<T>(A(i, i));
+                    }
+                } else {
+                    for (size_t i = 0; i < N; ++i) {
+                        T s = xp[i];
+                        for (size_t j = 0; j < i; ++j) s -= static_cast<T>(A(i, j)) * xp[j];
+                        xp[i] = unit ? s : s / static_cast<T>(A(i, i));
+                    }
+                }
+            } else {
+                // A^T or A^H: access A(j,i) instead of A(i,j), flips triangle direction
+                if (upper) {
+                    // Upper^T acts as lower -> forward substitution
+                    for (size_t i = 0; i < N; ++i) {
+                        T s = xp[i];
+                        for (size_t j = 0; j < i; ++j) s -= Aij(j, i) * xp[j];
+                        T d = unit ? T(1) : (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
+                        xp[i] = unit ? s : s / d;
+                    }
+                } else {
+                    // Lower^T acts as upper -> backward substitution
+                    for (size_t ii = 0; ii < N; ++ii) {
+                        const size_t i = N - 1 - ii;
+                        T s = xp[i];
+                        for (size_t j = i + 1; j < N; ++j) s -= Aij(j, i) * xp[j];
+                        T d = unit ? T(1) : (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
+                        xp[i] = unit ? s : s / d;
+                    };
+                };
+            };
+        };
+
+        template<typename T, Layout L, typename AM>
+        void trsm_impl(char side, char uplo, char trans, char diag, T alpha,  const AM& A, T* B_ptr, size_t ldb, size_t M, size_t N_rhs) {
+            if (M == 0 || N_rhs == 0) return;
+            // Scale B by alpha (beta=0 fills unconditionally)
+            if (alpha == T(0)) {
+                if constexpr (L == Layout::RowMajor)
+                    for (size_t i = 0; i < M; ++i)
+                        std::fill(B_ptr + i*ldb, B_ptr + i*ldb + N_rhs, T(0));
+                else
+                    for (size_t j = 0; j < N_rhs; ++j)
+                        std::fill(B_ptr + j*ldb, B_ptr + j*ldb + M, T(0));
+                return;
+            };
+            if (alpha != T(1)) {
+                if constexpr (L == Layout::RowMajor)
+                    for (size_t i = 0; i < M; ++i)
+                        for (size_t j = 0; j < N_rhs; ++j) B_ptr[i*ldb+j] *= alpha;
+                else
+                    for (size_t j = 0; j < N_rhs; ++j)
+                        for (size_t i = 0; i < M; ++i) B_ptr[j*ldb+i] *= alpha;
+            };
+            const bool left = (side == 'L' || side == 'l');
+            auto& pool = ThreadPool::instance();
+            if (left) {
+                // Each column of B is an independent trsv
+                const size_t num_threads = std::min(pool.thread_count(), N_rhs);
+                std::vector<std::future<void>> futures; 
+                futures.reserve(num_threads);
+                for (size_t t = 0; t < num_threads; ++t) {
+                    futures.push_back(pool.enqueue([=, &A]() {
+                        Vector<T> buf(M);
+                        for (size_t j = t; j < N_rhs; j += num_threads) {
+                            if constexpr (L == Layout::RowMajor) {
+                                for (size_t i = 0; i < M; ++i) buf[i] = B_ptr[i*ldb+j];
+                                trsm_col_solve(uplo, trans, diag, A, buf.data(), M);
+                                for (size_t i = 0; i < M; ++i) B_ptr[i*ldb+j] = buf[i];
+                            } else {
+                                trsm_col_solve(uplo, trans, diag, A, B_ptr + j*ldb, M);
+                            };
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
+            } else {
+                // Dual: x*op(A)=b is solved as op_dual(A)*x^T=b^T per row.
+                const bool conj_sides = (trans == 'C' || trans == 'c');
+                //char trans_r = (trans == 'N' || trans == 'n') ? 'T' : (trans == 'T' || trans == 't') ? 'N' : 'N'; // 'C': solve A, conj b/x
+                char trans_r = (trans == 'N' || trans == 'n') ? 'T' : 'N';
+                const size_t num_threads = std::min(pool.thread_count(), M);
+                std::vector<std::future<void>> futures; futures.reserve(num_threads);
+                for (size_t t = 0; t < num_threads; ++t) {
+                    futures.push_back(pool.enqueue([=, &A]() {
+                        Vector<T> buf(N_rhs);
+                        for (size_t i = t; i < M; i += num_threads) {
+                            if constexpr (L == Layout::RowMajor) {
+                                T* rp = B_ptr + i*ldb;
+                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                                trsm_col_solve(uplo, trans_r, diag, A, rp, N_rhs);
+                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                            } else {
+                                for (size_t j = 0; j < N_rhs; ++j) buf[j] = B_ptr[j*ldb+i];
+                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
+                                trsm_col_solve(uplo, trans_r, diag, A, buf.data(), N_rhs);
+                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
+                                for (size_t j = 0; j < N_rhs; ++j) B_ptr[j*ldb+i] = buf[j];
+                            };
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
+            };
+        };
+    };
+
+    // trsm: op(A) * X = alpha * B  (side='L')  or  X * op(A) = alpha * B  (side='R')
+    // A is square and triangular
+    template<typename T, Layout L, typename EM>
+    void trsm(char side, char uplo, char trans, char diag, T alpha, const MatExpr<EM>& A_expr, Matrix<T, L>& B) {
+        const bool left = (side == 'L' || side == 'l');
+        const size_t N_tri = left ? B.rows() : B.cols();
+        BOUNDS_CHECK(A_expr.self().rows() == N_tri && A_expr.self().cols() == N_tri);
+        detail::trsm_impl<T, L>(side, uplo, trans, diag, alpha, A_expr.self(), B.data(), B.stride(), B.rows(), B.cols());
+    };
+ 
+    template<typename T, Layout L, typename EM>
+    void trsm(char side, char uplo, char trans, char diag, T alpha,  const MatExpr<EM>& A_expr, MatrixView<T, L, false, false, true>& B) {
+        const bool left = (side == 'L' || side == 'l');
+        const size_t N_tri = left ? B.rows() : B.cols();
+        BOUNDS_CHECK(A_expr.self().rows() == N_tri && A_expr.self().cols() == N_tri);
+        detail::trsm_impl<T, L>(side, uplo, trans, diag, alpha, A_expr.self(), B.data(), B.stride(), B.rows(), B.cols());
     };
 };
