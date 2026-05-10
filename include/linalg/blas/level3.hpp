@@ -5,6 +5,11 @@
 
 namespace linalg {
     namespace detail {
+        // Real type traits
+		template<typename T> struct real_type_impl { using type = T; };
+        template<typename T> struct real_type_impl<std::complex<T>> { using type = T; };
+        template<typename T>
+        using real_type_t = typename real_type_impl<std::remove_cvref_t<T>>::type;
         namespace kernels {
             // Microkernels: accumulate alpha * A[i_block,k_block] * B[k_block,j_block] into C[i_block,j_block].  4-way unrolled loop
             // These operate on contiguous raw pointers only (thus enabling __restrict)
@@ -151,7 +156,7 @@ namespace linalg {
             parallel_for(M * N, PARALLEL_THRESHOLD_SIMPLE, [cp, beta](size_t s, size_t e) {
                 for (size_t i = s; i < e; ++i) cp[i] *= beta;
             });
-        }
+        };
         if (alpha == T(0)) return;
         // Fast path: extract pointer
         auto a_info = detail::raw_mat_info<T>(A_expr);
@@ -307,5 +312,88 @@ namespace linalg {
         const size_t N_tri = left ? B.rows() : B.cols();
         BOUNDS_CHECK(A_expr.self().rows() == N_tri && A_expr.self().cols() == N_tri);
         detail::trsm_impl<T, L>(side, uplo, trans, diag, alpha, A_expr.self(), B.data(), B.stride(), B.rows(), B.cols());
+    };
+
+    namespace detail {
+        // Triangle beta-scaling with beta=0 unconiditional fill
+        template<typename T, Layout L>
+        void scale_triangle(char uplo, T beta, T* cp, size_t ldc, size_t N) {
+            if (beta == T(1)) return;
+            const bool upper = (uplo == 'U' || uplo == 'u');
+            for (size_t i = 0; i < N; ++i) {
+                const size_t j0 = upper ? i : 0;
+                const size_t j1 = upper ? N : i + 1;
+                if constexpr (L == Layout::RowMajor) {
+                    T* row = cp + i * ldc;
+                    if (beta == T(0)) std::fill(row + j0, row + j1, T(0));
+                    else for (size_t j = j0; j < j1; ++j) row[j] *= beta;
+                } else {
+                    for (size_t j = j0; j < j1; ++j) {
+                        T& elem = cp[j*ldc+i];
+                        elem = (beta == T(0)) ? T(0) : elem * beta;
+                    };
+                };
+            };
+        };
+
+        namespace kernels {
+            template<typename T, Layout L>
+            void syrk_core(char uplo, T alpha, const T* ap, size_t lda, size_t N, size_t K, bool notrans, bool conjugate, T* cp, size_t ldc) {
+                const bool upper = (uplo == 'U' || uplo == 'u');
+                // Element of A at logical outer-product index (vec, k).
+                // notrans -> row  vec of A: A(vec, k)
+                // trans -> col  vec of A: A(k, vec)
+                auto Aelem = [ap, lda, notrans](size_t vec, size_t k) -> T {
+                    if constexpr (L == Layout::RowMajor)
+                        return notrans ? ap[vec*lda+k] : ap[k*lda+vec];
+                    else
+                        return notrans ? ap[k*lda+vec] : ap[vec*lda+k];
+                };
+                parallel_for(N, PARALLEL_THRESHOLD_COMPUTE,
+                    [=, &upper](size_t rs, size_t re) {
+                        for (size_t i = rs; i < re; ++i) {
+                            const size_t j0 = upper ? i : 0, j1 = upper ? N : i+1;
+                            for (size_t j = j0; j < j1; ++j) {
+                                T s = T(0);
+                                for (size_t k = 0; k < K; ++k)
+                                    s += Aelem(i, k) * (conjugate ? conj(Aelem(j, k)) : Aelem(j, k));
+                                if constexpr (L == Layout::RowMajor) cp[i*ldc+j] += alpha * s;
+                                else cp[j*ldc+i] += alpha * s;
+                            };
+                        };
+                    });
+            };
+        };
+
+        template<typename T, Layout L, typename EA>
+        void syrk_impl(char uplo, char trans, T alpha, const MatExpr<EA>& A_expr, T beta, T* cp, size_t ldc, size_t N, bool conjugate) {
+            const bool notrans = (trans == 'N' || trans == 'n');
+            const size_t K = notrans ? A_expr.self().cols() : A_expr.self().rows();
+            auto a_info = raw_mat_info<T>(A_expr);
+            Matrix<T, L> A_tmp;
+            if (!a_info) A_tmp = materialise<T, L>(A_expr);
+            const T* ap  = a_info ? a_info->data : A_tmp.data();
+            size_t lda = a_info ? a_info->lda : A_tmp.stride();
+            scale_triangle<T, L>(uplo, beta, cp, ldc, N);
+            if (alpha == T(0) || K == 0) return;
+            kernels::syrk_core<T, L>(uplo, alpha, ap, lda, N, K, notrans, conjugate, cp, ldc);
+        };
+    };
+
+    // SYmmetric Rank-K update: C = alpha * op(A) * op(A)^T + beta * C
+    template<typename T, Layout L, typename EA>
+    void syrk(char uplo, char trans, T alpha, const MatExpr<EA>& A_expr, T beta, Matrix<T, L>& C) {
+        const bool notrans = (trans == 'N' || trans == 'n');
+        const size_t N = notrans ? A_expr.self().rows() : A_expr.self().cols();
+        BOUNDS_CHECK(C.rows() == N && C.cols() == N);
+        detail::syrk_impl<T, L>(uplo, trans, alpha, A_expr, beta, C.data(), C.stride(), N, false);
+    };
+ 
+    template<typename T, Layout L, typename EA>
+    void syrk(char uplo, char trans, T alpha, const MatExpr<EA>& A_expr, T beta, MatrixView<T, L, false, false, true>& C) {
+        const bool notrans = (trans == 'N' || trans == 'n');
+        const size_t N = notrans ? A_expr.self().rows() : A_expr.self().cols();
+        BOUNDS_CHECK(C.rows() == N && C.cols() == N);
+        detail::syrk_impl<T, L>(uplo, trans, alpha, A_expr, beta, C.data(), C.stride(), N, false);
     };
 };
