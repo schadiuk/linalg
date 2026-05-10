@@ -396,4 +396,21 @@ namespace linalg {
         BOUNDS_CHECK(C.rows() == N && C.cols() == N);
         detail::syrk_impl<T, L>(uplo, trans, alpha, A_expr, beta, C.data(), C.stride(), N, false);
     };
+    
+    // HErmitian Rank-K update: C = alpha * op(A) * op(A)^H + beta * C
+    template<typename T, Layout L, typename EA>
+    void herk(char uplo, char trans, detail::real_type_t<T> alpha, const MatExpr<EA>& A_expr, detail::real_type_t<T> beta,  Matrix<T, L>& C) {
+        const bool notrans = (trans == 'N' || trans == 'n');
+        const size_t N = notrans ? A_expr.self().rows() : A_expr.self().cols();
+        BOUNDS_CHECK(C.rows() == N && C.cols() == N);
+        detail::syrk_impl<T, L>(uplo, trans, static_cast<T>(alpha), A_expr, static_cast<T>(beta), C.data(), C.stride(), N, true);
+    };
+ 
+    template<typename T, Layout L, typename EA>
+    void herk(char uplo, char trans, detail::real_type_t<T> alpha, const MatExpr<EA>& A_expr, detail::real_type_t<T> beta,  MatrixView<T, L, false, false, true>& C) {
+        const bool notrans = (trans == 'N' || trans == 'n');
+        const size_t N = notrans ? A_expr.self().rows() : A_expr.self().cols();
+        BOUNDS_CHECK(C.rows() == N && C.cols() == N);
+        detail::syrk_impl<T, L>(uplo, trans, static_cast<T>(alpha), A_expr, static_cast<T>(beta), C.data(), C.stride(), N, true);
+    };
 };
