@@ -20,6 +20,8 @@
 #include <linalg/blas/level2.hpp>
 #include <linalg/blas/level3.hpp>
 
+#include <linalg/decompositions/lu.hpp>
+
 #include <string>
 #include <sstream>
 #include <iomanip>
