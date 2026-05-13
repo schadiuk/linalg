@@ -189,4 +189,111 @@ namespace linalg {
             return Up;
         };
     }; 
+
+    // Public API for LU factorisation
+    template<typename T, Layout L>
+    LUResult<T, L> lu(const Matrix<T, L>& A) {
+        Matrix<T, L> work = A;
+        Vector<size_t> piv = detail::lu_factor(work);
+        return LUResult<T, L> {
+            detail::piv_to_P<T, L>(piv, A.rows()),
+            detail::unpack_L<T, L>(work),
+            detail::unpack_U<T, L>(work),
+            std::move(work),
+            std::move(piv)
+        };
+    };
+ 
+    template<typename T, Layout L, typename E>
+    LUResult<T, L> lu(const MatExpr<E>& e) {
+        return lu(Matrix<T, L>(e));
+    };
+
+    // Single RHS solver
+    template<typename T, Layout L>
+    void lu_solve(const LUResult<T, L>& res, Vector<T>& b) {
+        const auto& LU = res.packed;
+        const auto& piv = res.piv;
+        const size_t n = LU.rows();
+        BOUNDS_CHECK(n == LU.cols() && n == b.size() && piv.size() == n);
+        // Apply row permutation: b <- Pb
+        for (size_t i = 0; i < n; ++i) if (piv[i] != i) std::swap(b[i], b[piv[i]]);
+        // Forward substitution: L*x = b (unit lower triangular)
+        trsv('L', 'N', 'U', LU, b);
+        // Backward substitution: U*x = b (non-unit upper triangular)
+        trsv('U', 'N', 'N', LU, b);
+    };
+
+    // Multiple RHS
+    template<typename T, Layout L>
+    void lu_solve(const LUResult<T, L>& res, Matrix<T, L>& B) {
+        const auto& LU = res.packed;
+        const auto& piv = res.piv;
+        const size_t n = LU.rows();
+        const size_t nrhs = B.cols();
+        BOUNDS_CHECK(n == LU.cols() && n == B.rows() && piv.size() == n);
+        // Apply row permutation to B: swap row i with row piv[i] for all columns.
+        // For large nrhs the column loop is parallelised; threshold prevents
+        // task-spawn overhead for small systems.
+        for (size_t i = 0; i < n; ++i) {
+            if (piv[i] != i) {
+                const size_t pi = piv[i];
+                parallel_for(nrhs, PARALLEL_THRESHOLD_SIMPLE,
+                    [&B, i, pi](size_t s, size_t e) {
+                        for (size_t j = s; j < e; ++j)
+                            std::swap(B(i, j), B(pi, j));
+                    });
+            };
+        };
+        // Forward substitution: L*X = PB (unit lower triangular)
+        trsm('L', 'L', 'N', 'U', T(1), LU, B);
+        // Backward substitution: U*X = (above) (non-unit upper triangular)
+        trsm('L', 'U', 'N', 'N', T(1), LU, B);
+    };
+
+    // Determinant via log-magnitude accumulation
+    template<typename T, Layout L>
+    T lu_det(const LUResult<T, L>& res) {
+        const auto& LU = res.packed;
+        const auto& piv = res.piv;
+        const size_t n = LU.rows();
+        BOUNDS_CHECK(n == LU.cols());
+        // Sign of the permutation: (-1)^(number of non-trivial transpositions)
+        int swaps = 0;
+        for (size_t i = 0; i < piv.size(); ++i) if (piv[i] != i) ++swaps;
+        const double perm_sign = (swaps % 2 == 0) ? 1.0 : -1.0;
+        if constexpr (detail::is_complex_v<T>) {
+            using R = detail::real_type_t<T>;
+            double log_abs = 0.0;
+            double phase = (perm_sign < 0.0) ? std::numbers::pi : 0.0;
+            for (size_t i = 0; i < n; ++i) {
+                const T d = static_cast<T>(LU(i, i));
+                const double abs_d = std::abs(d);
+                if (abs_d == 0.0) return T(0);
+                log_abs += std::log(abs_d);
+                phase += std::arg(d);
+            };
+            const double mag = std::exp(log_abs);
+            return T(static_cast<R>(mag * std::cos(phase)), static_cast<R>(mag * std::sin(phase)));
+        } else {
+            double log_abs = 0.0;
+            double diag_sign = 1.0;
+            for (size_t i = 0; i < n; ++i) {
+                const double d = static_cast<double>(LU(i, i));
+                if (d == 0.0) return T(0);
+                log_abs += std::log(std::abs(d));
+                if (d < 0.0) diag_sign = -diag_sign;
+            };
+            return static_cast<T>(perm_sign * diag_sign * std::exp(log_abs));
+        };
+    };
+
+    // Inverse: delegates to lu_solve(LU, I)
+    template<typename T, Layout L>
+    Matrix<T, L> lu_inverse(const LUResult<T, L>& res) {
+        BOUNDS_CHECK(res.packed.rows() == res.packed.cols());
+        Matrix<T, L> inv = Matrix<T, L>::identity(res.packed.rows());
+        lu_solve(res, inv);
+        return inv;
+    };
 };
