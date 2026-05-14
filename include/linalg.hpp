@@ -20,6 +20,9 @@
 #include <linalg/blas/level2.hpp>
 #include <linalg/blas/level3.hpp>
 
+#include <linalg/norms/vector_norms.hpp>
+#include <linalg/norms/matrix_norms.hpp>
+
 #include <linalg/decompositions/lu.hpp>
 
 #include <string>
