@@ -86,7 +86,7 @@ namespace linalg {
                 kernels::gemv_kernel_col(T(1), Q_base, lda, v.data(), size_t(1), T(0), w.data(), m, len);
             // Step 2: Q_sub -= beta * w * v^H  (GERC)
             MatrixView<T, L, false, false, true> Q_sub(Q_base, m, len, lda);
-            const VectorView<T, false> v_active(v.data(), len); // Window onto v[0:len]
+            const VectorView<T, false> v_active(v.data(), len); // window onto v[0:len]
             gerc(-b, w, v_active, Q_sub);
         };
 
