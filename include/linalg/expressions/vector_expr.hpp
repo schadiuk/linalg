@@ -18,8 +18,8 @@ namespace linalg {
 
     
     template<typename T, bool Mutable = false> // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
-    struct VecViewRef : VecExpr<VecViewRef<T>> {
-        const VectorView<T, Mutable>& view;
+    struct VecViewRef : VecExpr<VecViewRef<T, Mutable>> {
+        VectorView<T, Mutable>& view;
 
         explicit VecViewRef(const VectorView<T, Mutable>& v) : view(v) {};
 

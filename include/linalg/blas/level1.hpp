@@ -359,11 +359,11 @@ namespace linalg {
     void rot(Vector<std::complex<T>>& x, Vector<std::complex<T>>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
-        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, conj(s)](size_t rs, size_t re) {
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, cs = conj(s)](size_t rs, size_t re) {
             for (size_t i = rs; i < re; ++i) {
                 std::complex<T> xi = x[i], yi = y[i];
                 x[i] =  c * xi + s * yi;
-                y[i] = -conj(s) * xi + c * yi;
+                y[i] = -cs * xi + c * yi;
             };
         });
     };
@@ -372,11 +372,11 @@ namespace linalg {
     void rot(VectorView<std::complex<T>, true>& x, VectorView<std::complex<T>, true>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
-        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, conj(s)](size_t rs, size_t re) {
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, cs = conj(s)](size_t rs, size_t re) {
             for (size_t i = rs; i < re; ++i) {
                 std::complex<T> xi = x(i), yi = y(i);
                 x(i) = c * xi + s * yi;
-                y(i) = -conj(s) * xi + c * yi;
+                y(i) = -cs * xi + c * yi;
             };
         });
     };

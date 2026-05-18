@@ -24,6 +24,7 @@
 #include <linalg/norms/matrix_norms.hpp>
 
 #include <linalg/decompositions/lu.hpp>
+#include <linalg/decompositions/qr.hpp>
 
 #include <string>
 #include <sstream>

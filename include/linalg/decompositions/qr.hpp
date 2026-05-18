@@ -86,7 +86,7 @@ namespace linalg {
                 kernels::gemv_kernel_col(T(1), Q_base, lda, v.data(), size_t(1), T(0), w.data(), m, len);
             // Step 2: Q_sub -= beta * w * v^H  (GERC)
             MatrixView<T, L, false, false, true> Q_sub(Q_base, m, len, lda);
-            const VectorView<T, false> v_active(v.data(), len); // window onto v[0:len]
+            const VectorView<T, false> v_active(v.data(), len); // Window onto v[0:len]
             gerc(-b, w, v_active, Q_sub);
         };
 
@@ -148,7 +148,7 @@ namespace linalg {
             gemm(T(1), hermitian(V), expr(W_trail), T(0), C);
             // GEMM 2: TC = T_mat * C  (nb * ncols_trail)
             Matrix<T, L> TC(nb, ncols_trail, T(0));
-            gemm(T(1), expr(T_mat), expr(C), T(0), TC);
+            gemm(T(1), hermitian(T_mat), expr(C), T(0), TC);
             // GEMM 3: W_trail -= V * TC
             gemm(-T(1), expr(V), expr(TC), T(1), W_trail);
             // Write W_trail back into W[k:m, j0:n]
