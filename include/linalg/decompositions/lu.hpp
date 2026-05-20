@@ -258,10 +258,19 @@ namespace linalg {
         const auto& piv = res.piv;
         const size_t n = LU.rows();
         BOUNDS_CHECK(n == LU.cols());
-        // Sign of the permutation: (-1)^(number of non-trivial transpositions)
+        // Sign of the permutation
+/*        
         int swaps = 0;
         for (size_t i = 0; i < piv.size(); ++i) if (piv[i] != i) ++swaps;
         const double perm_sign = (swaps % 2 == 0) ? 1.0 : -1.0;
+*/
+        std::vector<bool> visited(n, false);
+        int cycles = 0;
+        for (size_t i = 0; i < n; ++i) {
+            if (!visited[i]) { ++cycles; for (size_t j = i; !visited[j]; j = piv[j]) visited[j] = true; }
+        };
+        const double perm_sign = ((n - cycles) % 2 == 0) ? 1.0 : -1.0
+
         if constexpr (detail::is_complex_v<T>) {
             using R = detail::real_type_t<T>;
             double log_abs = 0.0;
