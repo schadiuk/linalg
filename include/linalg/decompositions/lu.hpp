@@ -269,7 +269,7 @@ namespace linalg {
         for (size_t i = 0; i < n; ++i) {
             if (!visited[i]) { ++cycles; for (size_t j = i; !visited[j]; j = piv[j]) visited[j] = true; }
         };
-        const double perm_sign = ((n - cycles) % 2 == 0) ? 1.0 : -1.0
+        const double perm_sign = ((n - cycles) % 2 == 0) ? 1.0 : -1.0;
 
         if constexpr (detail::is_complex_v<T>) {
             using R = detail::real_type_t<T>;
