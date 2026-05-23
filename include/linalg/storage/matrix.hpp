@@ -3,6 +3,7 @@
 #include <linalg/core/common.hpp>
 #include <linalg/core/error.hpp>
 #include <linalg/core/parallel.hpp>
+#include <linalg/core/hints.hpp>
 
 namespace linalg {
     // Forward declaration of expression template class
@@ -289,7 +290,7 @@ namespace linalg {
 
     private:
         // Data storage and dimensions
-        std::vector<T> data_;
+        std::vector<T, AlignedAllocator<T>> data_;
         size_t rows_, cols_, stride_;
 
         template<typename U, Layout LL, bool Trans, bool Conj, bool Mutable> friend class MatrixView;
