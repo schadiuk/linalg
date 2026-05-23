@@ -8,11 +8,15 @@
 #include <functional>
 
 namespace linalg {
-    // Parallelisation thresholds
+    /// @brief Threshold for parallelisation of non-intensive operations.
     constexpr size_t PARALLEL_THRESHOLD_SIMPLE  = 65536;
+
+    /// @brief Threshold used in kernels.
     constexpr size_t PARALLEL_THRESHOLD_COMPUTE = 4096;
+
+    /// @brief Parallelised reduction threshold.
     constexpr size_t PARALLEL_THRESHOLD_REDUCE  = 16384;
-    // Block sizes for cache-friendly operations
+    // Block sizes for cache-friendly operations.
     constexpr size_t L1_BLOCK = 32;
     constexpr size_t L2_BLOCK = 128;
 
@@ -22,7 +26,7 @@ namespace linalg {
 		inline constexpr size_t CACHE_LINE_SIZE = 64;
 	#endif
 
-    // Padded struct to avoid false sharing
+   /// @brief Padded struct to avoid false sharing.
     template<typename T>
     struct alignas(CACHE_LINE_SIZE) Padded {
         T value;
@@ -32,7 +36,7 @@ namespace linalg {
         operator const T& () const { return value; };
     };
 
-    // Singleton thread pool for parallel execution
+    /// @brief Singleton thread pool for parallel execution.
     class ThreadPool {
     public:
         static ThreadPool& instance() {
@@ -56,10 +60,10 @@ namespace linalg {
             return res;
         };
 
-        // Get the number of worker threads
+        /// @brief Get the number of worker threads.
         size_t thread_count() const { return workers_.size(); };
 
-        // Destructor: stop all threads and join them
+        /// @brief Destructor: stop all threads and join them.
         ~ThreadPool() {
             {
                 std::unique_lock<std::mutex> lock(queue_mutex_);
@@ -72,7 +76,7 @@ namespace linalg {
         };
 
     private:
-        // Constructor: create worker threads
+        /// @brief Constructor: create worker threads.
         ThreadPool() : stop_(false) {
             size_t num_threads = std::thread::hardware_concurrency();
             if (num_threads == 0) num_threads = 4;
@@ -105,7 +109,10 @@ namespace linalg {
         bool stop_;
     };
 
-    // Parallel execution of a lambda
+    /// @brief Helper function for parallel execution of a lambda.
+    /// @param total
+    /// @param threshold Decision threshold for serialising smaller tasks.
+    /// @param func Lambda expression.
     template<typename F>
     void parallel_for(size_t total, size_t threshold, F&& func) {
         if (total < threshold) {
@@ -131,7 +138,11 @@ namespace linalg {
         for (auto& f : futures) { f.get(); };
     };
 
-    // Specialised for reductions
+    /// @brief Specialised helper for reductions.
+    /// @param total
+    /// @param threshold Decision threshold for serialising smaller tasks.
+    /// @param func Lambda expression (the reduction).
+    /// @returns scalar result of the reduction.
     template<typename T, typename F>
     T parallel_reduce(size_t total, size_t threshold, F&& func) {
         if (total == 0) return T(0);

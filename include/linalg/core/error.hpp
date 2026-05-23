@@ -17,22 +17,20 @@ namespace linalg::detail {
         };
     };
 
-    // Helper called by the macro
-    [[noreturn]] inline void bounds_fail(
-            const char* expr,
-            const std::source_location& loc) {
+    // Helper called by the bounds_check macro.
+    [[noreturn]] inline void bounds_fail(const char* expr, const std::source_location& loc) {
         throw BoundsError(expr, loc);
     };
 
-    // Marked [[likely]] on the fast path so the branch predictor and optimiser treat a passing check as free
+    /// @brief Dimension-checking helper.
     inline void bounds_check(bool cond, const char* expr,
         const std::source_location& loc = std::source_location::current()) {
-        if (cond) [[likely]] return;
+        if (cond) [[likely]] return; // Marked [[likely]] on the fast path so the branch predictor and optimiser treat a passing check as free.
         else [[unlikely]] bounds_fail(expr, loc);
     };
 };
 
-// Bound-checking macro with zero overhead when NDEBUG is defined, and detailed error messages otherwise
+// Bound-checking macro with zero overhead when NDEBUG is defined, and detailed error messages otherwise.
 #ifndef NDEBUG
 #define BOUNDS_CHECK(cond) ::linalg::detail::bounds_check((cond), #cond, std::source_location::current())
 #else
