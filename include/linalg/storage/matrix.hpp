@@ -8,14 +8,22 @@ namespace linalg {
     // Forward declaration of expression template class
     template<typename U> struct MatExpr;
 
-    // Main storage class for matrices that supports both memory layouts
+    /// @brief Main matrix storage class.
+    /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+    /// @tparam L Layout.
     template<typename T = DefaultScalar, Layout L = Layout::RowMajor> requires Scalar<T>
     class Matrix : public MatExpr<Matrix<T, L>> {
     public:
-        // Empty Matrix constructor
+        /// @brief Empty matrix constructor. 
+        /// @param m Row count.
+        /// @param n Column count.
+        /// @note Delegates to constructor of `std::vector` of m * n size.
         Matrix(size_t m = 0, size_t n = 0) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_(m * n) {};
 
-        // Parallelised constructor that fills matrix with a value given by the 3rd argument
+        /// @brief Uniform constructor that fills matrix with a given value.
+        /// @param m Row count.
+        /// @param n Column count. 
+        /// @param val The fill-in value.
         Matrix(size_t m, size_t n, const T& val) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_() {
             size_t total = m * n;
             data_.resize(total);
@@ -27,21 +35,31 @@ namespace linalg {
                 });
         };
 
-        // Constructor from a given expression
+        /// @brief Constructor from a given `MatExpr`.
+        /// @tparam E CRTP-required parameter clause of `MatExpr`.
+        /// @param expr The expression.
+        /// @param val Placeholder value.
         template<typename E>
         Matrix(const MatExpr<E>& expr, const T& val = T(0)) : rows_(expr.rows()), cols_(expr.cols()), stride_(L == Layout::RowMajor ? expr.cols() : expr.rows()),
-            data_(expr.cols()* expr.rows(), val) {
+            data_(expr.cols() * expr.rows(), val) {
             *this = expr;
         };
 
-        // Constructor from a given view
+        /// @brief Constructor from a given `MatrixView`.
+        /// @tparam Trans Transposition flag required by the view.
+        /// @tparam Conj Conjugation flag required by the view.
+        /// @tparam Mutable Mutability indicator.
+        /// @param view The view.
         template<bool Trans, bool Conj, bool Mutable>
         Matrix(const MatrixView<T, L, Trans, Conj, Mutable>& view) : rows_(view.rows()), cols_(view.cols()), stride_(L == Layout::RowMajor ? view.cols() : view.rows()),
             data_(view.rows() * view.cols()) {
             *this = expr(view);
         };
 
-        // Constructor from std::array
+        /// @brief Constructor from a 2D `std::array` object.
+        /// @tparam rows Row count deduced from the array.
+        /// @tparam cols Column count deduced likewise.
+        /// @param arr The array.
         template<size_t rows, size_t cols>
         Matrix(const std::array<std::array<T, cols>, rows>& arr) : rows_(rows), cols_(cols), stride_(L == Layout::RowMajor ? cols : rows), data_(rows* cols) {
             const size_t total = rows * cols;
@@ -76,7 +94,10 @@ namespace linalg {
             };
         };
 
-        // Constructor from C-styled 2d array
+        /// @brief Constructor from a 2D C-styled array.
+        /// @tparam rows Row count deduced from the array.
+        /// @tparam cols Column count obtained likewise.
+        /// @param arr The array. 
         template<size_t rows, size_t cols>
         Matrix(const T(&arr)[rows][cols]) : rows_(rows), cols_(cols),
             stride_(L == Layout::RowMajor ? cols : rows), data_(rows* cols) {
@@ -112,7 +133,11 @@ namespace linalg {
             };
         };
 
-        // Assignent from C-styled array
+        /// @brief Assignment operator from a C-styled array.
+        /// @tparam rows Row count deduced from the array.
+        /// @tparam cols Column count deduced likewise.
+        /// @param arr The array. 
+        /// @return `*this` Matrix<T, L> pointer.
         template<size_t rows, size_t cols>
         Matrix<T, L>& operator=(const T(&arr)[rows][cols]) {
             BOUNDS_CHECK(this->rows_ == rows && this->cols_ == cols);
@@ -150,7 +175,10 @@ namespace linalg {
             return *this;
         };
 
-        // Assignment from expression
+        /// @brief Assignment operator from an expression.
+        /// @tparam E CRTP-required parameter clause of `MatExpr`.
+        /// @param expr The expression.
+        /// @return `*this` Matrix<T, L> pointer.
         template<typename E>
         Matrix<T, L>& operator=(const MatExpr<E>& expr) {
             const auto& e = expr.self();
@@ -204,7 +232,10 @@ namespace linalg {
             return *this;
         };
 
-        // Aliasing detection
+		/// @brief Aliasing detection utility.
+		/// @param p Wildcard pointer.
+		/// @param bytes 
+		/// @return Boolean indicator.
 		bool depends_on(const void* p, size_t bytes) const {			
 			const void* start = static_cast<const void*>(data_.data());
 			const void* end = static_cast<const void*>(data_.data() + data_.size());
@@ -212,7 +243,10 @@ namespace linalg {
 			return (p < end) && (other_end > start);
 		};
 
-        // Conversion helper
+        /// @brief Converion to row-major array.
+        /// @tparam rows 
+        /// @tparam cols 
+        /// @return 2D `std::array`.
         template<size_t rows, size_t cols>
         std::array<std::array<T, cols>, rows> to_array() const {
             BOUNDS_CHECK(this->rows_ == rows && this->cols_ == cols);
@@ -225,7 +259,9 @@ namespace linalg {
             return result;
         };
 
-        // Reshape Matrix to the given dimensions, keeping data and Layout
+        /// @brief Layout-aware reshaping helper.
+        /// @param new_rows Desired row count.
+        /// @param new_cols Desired column count.
         void reshape(size_t new_rows, size_t new_cols) {
             BOUNDS_CHECK(new_rows * new_cols == rows_ * cols_);
             rows_ = new_rows;
@@ -233,27 +269,34 @@ namespace linalg {
             stride_ = (L == Layout::RowMajor) ? cols_ : rows_;
         };
 
-        // Accessors
         size_t rows() const { return rows_; };
         size_t cols() const { return cols_; };
         size_t stride() const { return stride_; };
         T* data() { return data_.data(); };
         const T* data() const { return data_.data(); };
 
-        // Safe element indexation        
+        /// @brief Safe element access, as operator() does not check if index is valid.
+        /// @pre Matrix<T, L> A.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)`.
+        /// @throws linalg::detail::BoundsError.
         T& at(size_t i, size_t j) {
             BOUNDS_CHECK(i < rows_ && j < cols_);
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
-
+ 
         const T& at(size_t i, size_t j) const {
             BOUNDS_CHECK(i < rows_ && j < cols_);
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
 
-        // Unchecked element indexation
+        /// @brief Unchecked element indexation.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)` if such is legal, undefined otherwise. 
         T& operator()(size_t i, size_t j) {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
@@ -264,17 +307,31 @@ namespace linalg {
             return data_[idx];
         };
 
-        // Static factory methods
+        /// @brief Static factory method for creating n * n identity matrix.
+        /// @param n Dimension.
+        /// @return The identity matrix of size `n`.
         static Matrix identity(size_t n) {
             Matrix mat(n, n, T(0));
             for (size_t i = 0; i < n; ++i) { mat(i, i) = T(1); };
             return mat;
         };
 
+        /// @brief Static factory method for creating m * n matrix initialised with all ones.
+        /// @param m Row count.
+        /// @param n Column count.
+        /// @return The matrix.
         static Matrix ones(size_t m, size_t n) { return Matrix(m, n, T(1)); };
 
+        /// @brief Static factory method for creating m * n matrix initialised with all zeros.
+        /// @param m Row count.
+        /// @param n Column count.
+        /// @return The matrix.
         static Matrix zeros(size_t m, size_t n) { return Matrix(m, n, T(0)); };
 
+        /// @brief Static factory method for creating m * n matrix initialised with random entries.
+        /// @param m Row count.
+        /// @param n Column count.
+        /// @return The matrix.
         static Matrix random(size_t m, size_t n) {
             Matrix mat(m, n);
             size_t total = m * n;
