@@ -13,6 +13,7 @@ namespace linalg {
 	    size_t cols() const { return mat.cols(); };
         size_t stride() const { return mat.stride(); };
 
+        LINALG_INLINE
 	    T operator()(size_t i, size_t j) const { return mat(i, j); };
 
 	    bool depends_on(const void* p, size_t bytes) const { return mat.depends_on(p, bytes); };
@@ -35,9 +36,11 @@ namespace linalg {
         size_t stride() const { return view.stride(); };
 
         // Read path: always available
+        LINALG_INLINE
         T operator()(size_t i, size_t j) const { return view(i, j); };
  
         // Write path: only synthesised for mutable wrappers
+        LINALG_INLINE
         T& operator()(size_t i, size_t j) requires (Mutable && !Conj) { return view(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return view.depends_on(p, bytes); };
@@ -54,6 +57,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) + e2(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -70,6 +74,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) - e2(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -86,6 +91,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) * e2(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -102,6 +108,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         T operator()(size_t i, size_t j) const { return expr(i, j) * scalar; };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -118,6 +125,7 @@ namespace linalg {
         size_t rows() const { return a.rows(); };
         size_t cols() const { return b.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             using Type = decltype(a(i, 0)* b(0, j));
             Type sum = Type(0);
@@ -164,6 +172,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) / e2(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -190,6 +199,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return scalar / expr(i, j); };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -216,6 +226,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return func(expr(i, j)); };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -231,11 +242,13 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             auto val = expr(i, j);
             using T = std::remove_cv_t<std::remove_reference_t<decltype(val)>>;
             return (static_cast<int>(j) - static_cast<int>(i) >= k) ? val : T(0);
         };
+
         bool depends_on(const void* p, size_t n) const { return expr.depends_on(p, n); };
     };
     
@@ -249,11 +262,13 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
         
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             auto val = expr(i, j);
             using T = std::remove_cv_t<std::remove_reference_t<decltype(val)>>;
             return (static_cast<int>(j) - static_cast<int>(i) <= k) ? val : T(0);
         };
+        
         bool depends_on(const void* p, size_t n) const { return expr.depends_on(p, n); };
     };
 

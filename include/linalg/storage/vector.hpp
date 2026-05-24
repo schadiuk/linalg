@@ -116,21 +116,25 @@ namespace linalg {
 		};
 
         // Unchecked element indexation. NOTE: both operator [] and () are provided
+		LINALG_INLINE
 		T& operator[](size_t i) {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		const T& operator[](size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		T& operator()(size_t i) {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		const T& operator()(size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];

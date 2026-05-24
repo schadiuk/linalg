@@ -255,11 +255,13 @@ namespace linalg {
         };
 
         // Unchecked element indexation
+        LINALG_INLINE
         T& operator()(size_t i, size_t j) {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
 
+        LINALG_INLINE
         const T& operator()(size_t i, size_t j) const {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];

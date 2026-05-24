@@ -11,6 +11,7 @@ namespace linalg {
 
         size_t size() const { return vec.size(); };
 
+        LINALG_INLINE
         T operator()(size_t i) const { return vec[i]; };
 
         bool depends_on(const void* p, size_t bytes) const { return vec.depends_on(p, bytes); };
@@ -31,9 +32,11 @@ namespace linalg {
         size_t size() const { return view.size(); };
 
         // Read path: always available
+        LINALG_INLINE
         T operator()(size_t i) const { return view(i); };
  
         // Write path: only synthesised for mutable wrappers
+        LINALG_INLINE
         T& operator()(size_t i) requires Mutable { return view(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return view.depends_on(p, bytes); };
@@ -49,6 +52,7 @@ namespace linalg {
 
         size_t size() const { return e1.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return e1(i) + e2(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -62,8 +66,10 @@ namespace linalg {
 
         VecSubExpr(const E1& a, const E2& b) : e1(a), e2(b) { BOUNDS_CHECK(a.size() == b.size()); };
 
+
         size_t size() const { return e1.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return e1(i) - e2(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -79,6 +85,7 @@ namespace linalg {
 
         size_t size() const { return e1.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return e1(i) * e2(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -94,6 +101,7 @@ namespace linalg {
 
         size_t size() const { return e1.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return e1(i) / e2(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return e1.depends_on(p, bytes) || e2.depends_on(p, bytes); };
@@ -109,6 +117,7 @@ namespace linalg {
 
         size_t size() const { return expr.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return scalar * expr(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -124,6 +133,7 @@ namespace linalg {
 
         size_t size() const { return mat.rows(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const {
             using Type = decltype(mat(i, 0)* vec(0));
             Type sum = Type(0);
@@ -144,6 +154,7 @@ namespace linalg {
 
         size_t size() const { return expr.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return scalar / expr(i); };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -169,6 +180,7 @@ namespace linalg {
 
         size_t size() const { return expr.size(); };
 
+        LINALG_INLINE
         auto operator()(size_t i) const { return func(expr(i)); };
 
         bool depends_on(const void* p, size_t bytes) const { return expr.depends_on(p, bytes); };
@@ -183,6 +195,7 @@ namespace linalg {
 
         size_t size() const { return mat.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t j) const {
             using Type = decltype(vec(0)* mat(0, j));
             Type sum = Type(0);

@@ -10,9 +10,10 @@ namespace linalg {
 		T& self() { return static_cast<T&>(*this); };
 		const T& self() const { return static_cast<const T&>(*this); };
 		
-		size_t rows() const { return self().rows(); };
-		size_t cols() const { return self().cols(); };
+		LINALG_INLINE size_t rows() const { return self().rows(); };
+		LINALG_INLINE size_t cols() const { return self().cols(); };
 
+		LINALG_INLINE
 		auto operator()(size_t i, size_t j) const { return self()(i, j); };
 
 		bool depends_on(const void* p, size_t bytes) const { return self().depends_on(p, bytes); };
@@ -24,8 +25,9 @@ namespace linalg {
 		T& self() { return static_cast<T&>(*this); };
 	    const T& self() const { return static_cast<const T&>(*this); };
 		
-	    size_t size() const { return self().size(); };
+	    LINALG_INLINE size_t size() const { return self().size(); };
 
+		LINALG_INLINE
 	    auto operator()(size_t i) const { return self()(i); };
 
 	    bool depends_on(const void* p, size_t bytes) const { return self().depends_on(p, bytes); };
