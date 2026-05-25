@@ -163,7 +163,7 @@ namespace linalg {
 
             if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
                 if (depends) {
-                    std::vector<T> temp(total);
+                    std::vector<T, AlignedAllocator<T>> temp(total);
                     size_t idx = 0;
                     for (size_t i = 0; i < this->rows_; ++i) {
                         for (size_t j = 0; j < this->cols_; ++j) {

@@ -68,7 +68,7 @@ namespace linalg {
 
 			if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
 				if (depends) {
-					std::vector<T> temp(total);
+					std::vector<T, AlignedAllocator<T>> temp(total);
 					for (size_t i = 0; i < total; ++i) {
 						temp[i] = e(i);
 					};
