@@ -11,67 +11,95 @@ namespace linalg {
         template<typename T>
         using real_type_t = typename real_type_impl<std::remove_cvref_t<T>>::type;
         namespace kernels {
-            // Microkernels: accumulate alpha * A[i_block,k_block] * B[k_block,j_block] into C[i_block,j_block].  4-way unrolled loop
-            // These operate on contiguous raw pointers only (thus enabling __restrict)
             template<typename T>
-            inline void gemm_microkernel_row(
-                const T* __restrict A, const T* __restrict B,
-                T* __restrict C, T alpha,
+            LINALG_INLINE void gemm_microkernel_row(
+                const T* LINALG_RESTRICT A, const T* LINALG_RESTRICT B,
+                T* LINALG_RESTRICT C, T alpha,
                 size_t lda, size_t ldb, size_t ldc,
                 size_t i0, size_t i1,
                 size_t j0, size_t j1,
                 size_t k0, size_t k1) {
 
                 for (size_t i = i0; i < i1; ++i) {
-                    const T* a_row = A + i * lda;
-                    T* c_row = C + i * ldc;
+                    const T* LINALG_RESTRICT a_row = A + i * lda;
+                    T* LINALG_RESTRICT c_row = C + i * ldc;
+                    /*
+                    for (size_t k = k0; k < k1; ++k) {
+                        const T a_ik  = alpha * a_row[k];
+                        const T* LINALG_RESTRICT b_row = B + k * ldb;
+                        LINALG_PREFETCH(b_row + ldb, 0, 2);
+                        LINALG_VECTORIZE
+                        for (size_t j = j0; j < j1; ++j) c_row[j] += a_ik * b_row[j];
+                    };
+                    */
+                    
                     for (size_t k = k0; k < k1; ++k) {
                         const T a_ik  = alpha * a_row[k];
                         const T* b_row = B + k * ldb;
                         size_t j = j0;
-                        for (; j + 4 <= j1; j += 4) {
+                        for (; j + 8 <= j1; j += 8) {
                             c_row[j] += a_ik * b_row[j];
                             c_row[j+1] += a_ik * b_row[j+1];
                             c_row[j+2] += a_ik * b_row[j+2];
                             c_row[j+3] += a_ik * b_row[j+3];
+                            c_row[j+4] += a_ik * b_row[j+4];
+                            c_row[j+5] += a_ik * b_row[j+5];
+                            c_row[j+6] += a_ik * b_row[j+6];
+                            c_row[j+7] += a_ik * b_row[j+7];
                         };
                         for (; j < j1; ++j) c_row[j] += a_ik * b_row[j];
                     };
+                    
                 };
             };
         
             template<typename T>
-            inline void gemm_microkernel_col(
-                const T* __restrict A, const T* __restrict B,
-                T* __restrict C, T alpha,
+            LINALG_INLINE void gemm_microkernel_col(
+                const T* LINALG_RESTRICT A, const T* LINALG_RESTRICT B,
+                T* LINALG_RESTRICT C, T alpha,
                 size_t lda, size_t ldb, size_t ldc,
                 size_t i0, size_t i1,
                 size_t j0, size_t j1,
                 size_t k0, size_t k1) {
                 for (size_t j = j0; j < j1; ++j) {
-                    const T* b_col = B + j * ldb;
-                    T* c_col = C + j * ldc;
+                    const T* LINALG_RESTRICT b_col = B + j * ldb;
+                    T* LINALG_RESTRICT c_col = C + j * ldc;
                     for (size_t k = k0; k < k1; ++k) {
+                        /*
+                        const T b_kj  = alpha * b_col[k];
+                        const T* LINALG_RESTRICT a_col = A + k * lda;
+                        LINALG_PREFETCH(a_col + lda, 0, 2);  // prefetch next a_col
+                        LINALG_VECTORIZE
+                        for (size_t i = i0; i < i1; ++i) c_col[i] += a_col[i] * b_kj;
+                        */
+
+                        // Auto-vectorizer does not pay off well, with 8-wide unroll outperforming for every dtype.
+                        
                         const T b_kj  = alpha * b_col[k];
                         const T* a_col = A + k * lda;
                         size_t i = i0;
-                        for (; i + 4 <= i1; i += 4) {
+                        for (; i + 8 <= i1; i += 8) {
                             c_col[i] += a_col[i] * b_kj;
                             c_col[i+1] += a_col[i+1] * b_kj;
                             c_col[i+2] += a_col[i+2] * b_kj;
                             c_col[i+3] += a_col[i+3] * b_kj;
+                            c_col[i+4] += a_col[i+4] * b_kj;
+                            c_col[i+5] += a_col[i+5] * b_kj;
+                            c_col[i+6] += a_col[i+6] * b_kj;
+                            c_col[i+7] += a_col[i+7] * b_kj;
                         };
                         for (; i < i1; ++i) c_col[i] += a_col[i] * b_kj;
+                        
                     };
                 };
             };
         };
 
         template<typename T, Layout L>
-        void gemm_blocked(T alpha, const T* a_ptr, size_t lda, const T* b_ptr, size_t ldb,
-                T* c_ptr, size_t ldc, size_t M, size_t N, size_t K) {
+        void gemm_blocked(T alpha, const T* LINALG_RESTRICT a_ptr, size_t lda, const T* LINALG_RESTRICT b_ptr, size_t ldb,
+                T* LINALG_RESTRICT c_ptr, size_t ldc, size_t M, size_t N, size_t K) {
             if (M == 0 || N == 0 || K == 0) return;
-            const size_t bs = L1_BLOCK;
+            const size_t bs = L1_BLOCK * 2;
             const size_t ni_blocks = (M + bs - 1) / bs;
             const size_t nj_blocks = (N + bs - 1) / bs;
             const size_t nk_blocks = (K + bs - 1) / bs;
@@ -112,22 +140,26 @@ namespace linalg {
             Matrix<T, L> dst(M, N);
             if constexpr (L == Layout::RowMajor) {
                 parallel_for(M, 1, [&src, &dst, N](size_t rs, size_t re) {
-                    for (size_t i = rs; i < re; ++i)
-                        for (size_t j = 0; j < N; ++j)
-                            dst(i, j) = static_cast<T>(src(i, j));
+                    for (size_t i = rs; i < re; ++i) {
+                        T* LINALG_RESTRICT dp = dst.data() + i * dst.stride();
+                        LINALG_VECTORIZE
+                        for (size_t j = 0; j < N; ++j) dp[j] = static_cast<T>(src(i, j));
+                    };
                 });
             } else {
                 parallel_for(N, 1, [&src, &dst, M](size_t cs, size_t ce) {
-                    for (size_t j = cs; j < ce; ++j)
-                        for (size_t i = 0; i < M; ++i)
-                            dst(i, j) = static_cast<T>(src(i, j));
+                    for (size_t j = cs; j < ce; ++j) {
+                        T* LINALG_RESTRICT dp = dst.data() + j * dst.stride();
+                        LINALG_VECTORIZE
+                        for (size_t i = 0; i < M; ++i) dp[i] = static_cast<T>(src(i, j));
+                    };
                 });
             };
             return dst;
         };
 
         template<typename T, Layout L>
-        void gemm_direct(T alpha, const T* ap, size_t lda, const T* bp, size_t ldb, T* cp, size_t ldc, size_t M, size_t N, size_t K) {
+        LINALG_INLINE void gemm_direct(T alpha, const T* LINALG_RESTRICT ap, size_t lda, const T* LINALG_RESTRICT bp, size_t ldb, T* LINALG_RESTRICT cp, size_t ldc, size_t M, size_t N, size_t K) {
             if (M * N * K < static_cast<size_t>(PARALLEL_THRESHOLD_COMPUTE) * 10) {
                 if constexpr (L == Layout::RowMajor)
                     kernels::gemm_microkernel_row(ap, bp, cp, alpha, lda, ldb, ldc, 0, M, 0, N, 0, K);
@@ -143,18 +175,18 @@ namespace linalg {
 
     // GEneral Matrix Multiplication: C = alpha * A * B + beta * C
     template<typename T, Layout L, typename EA, typename EB>
-    void gemm(T alpha, const MatExpr<EA>& A_expr, const MatExpr<EB>& B_expr, T beta, Matrix<T, L>& C) {
+    LINALG_INLINE void gemm(T alpha, const MatExpr<EA>& A_expr, const MatExpr<EB>& B_expr, T beta, Matrix<T, L>& C) {
         const size_t M = A_expr.self().rows();
         const size_t N = B_expr.self().cols();
         const size_t K = A_expr.self().cols();
         BOUNDS_CHECK(M == C.rows() && N == C.cols() && K == B_expr.self().rows());
         if (M == 0 || N == 0 || K == 0) return;
-        T* cp = C.data();
+        T* LINALG_RESTRICT cp = detail::assume_aligned<64>(C.data());
         // Apply beta: C is always tight (Matrix is flat-packed)
         if (beta == T(0)) std::fill(cp, cp + M * N, T(0));
         else if (beta != T(1)) {
             parallel_for(M * N, PARALLEL_THRESHOLD_SIMPLE, [cp, beta](size_t s, size_t e) {
-                for (size_t i = s; i < e; ++i) cp[i] *= beta;
+                LINALG_VECTORIZE for (size_t i = s; i < e; ++i) cp[i] *= beta;
             });
         };
         if (alpha == T(0)) return;
@@ -165,17 +197,17 @@ namespace linalg {
         Matrix<T, L> A_tmp, B_tmp;
         if (!a_info) A_tmp = detail::materialise<T, L>(A_expr);
         if (!b_info) B_tmp = detail::materialise<T, L>(B_expr);
-        const T* ap = a_info ? a_info->data : A_tmp.data();
-        size_t lda = a_info ? a_info->lda : A_tmp.stride();
-        const T* bp = b_info ? b_info->data : B_tmp.data();
-        size_t ldb = b_info ? b_info->lda : B_tmp.stride();
+        const T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_info ? a_info->data : A_tmp.data());
+        const T* LINALG_RESTRICT bp = detail::assume_aligned<64>(b_info ? b_info->data : B_tmp.data());
+        const size_t lda = a_info ? a_info->lda : A_tmp.stride();
+        const size_t ldb = b_info ? b_info->lda : B_tmp.stride();
         detail::gemm_direct<T, L>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
     };
 
     namespace detail {
         // In-place triangular solve on a contiguous vector
         template<typename T, typename AM>
-        void trsm_col_solve(char uplo, char trans, char diag, const AM& A, T* xp, size_t N) {
+        LINALG_INLINE void trsm_col_solve(char uplo, char trans, char diag, const AM& A, T* xp, size_t N) {
             const bool upper = (uplo  == 'U' || uplo  == 'u');
             const bool unit = (diag  == 'U' || diag  == 'u');
             const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
@@ -189,12 +221,14 @@ namespace linalg {
                     for (size_t ii = 0; ii < N; ++ii) {
                         const size_t i = N - 1 - ii;
                         T s = xp[i];
+                        LINALG_VECTORIZE
                         for (size_t j = i + 1; j < N; ++j) s -= static_cast<T>(A(i, j)) * xp[j];
                         xp[i] = unit ? s : s / static_cast<T>(A(i, i));
                     }
                 } else {
                     for (size_t i = 0; i < N; ++i) {
                         T s = xp[i];
+                        LINALG_VECTORIZE
                         for (size_t j = 0; j < i; ++j) s -= static_cast<T>(A(i, j)) * xp[j];
                         xp[i] = unit ? s : s / static_cast<T>(A(i, i));
                     }
@@ -205,6 +239,7 @@ namespace linalg {
                     // Upper^T acts as lower -> forward substitution
                     for (size_t i = 0; i < N; ++i) {
                         T s = xp[i];
+                        LINALG_VECTORIZE
                         for (size_t j = 0; j < i; ++j) s -= Aij(j, i) * xp[j];
                         T d = unit ? T(1) : (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
                         xp[i] = unit ? s : s / d;
@@ -214,6 +249,7 @@ namespace linalg {
                     for (size_t ii = 0; ii < N; ++ii) {
                         const size_t i = N - 1 - ii;
                         T s = xp[i];
+                        LINALG_VECTORIZE
                         for (size_t j = i + 1; j < N; ++j) s -= Aij(j, i) * xp[j];
                         T d = unit ? T(1) : (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
                         xp[i] = unit ? s : s / d;
@@ -236,12 +272,23 @@ namespace linalg {
                 return;
             };
             if (alpha != T(1)) {
-                if constexpr (L == Layout::RowMajor)
-                    for (size_t i = 0; i < M; ++i)
-                        for (size_t j = 0; j < N_rhs; ++j) B_ptr[i*ldb+j] *= alpha;
-                else
-                    for (size_t j = 0; j < N_rhs; ++j)
-                        for (size_t i = 0; i < M; ++i) B_ptr[j*ldb+i] *= alpha;
+                if constexpr (L == Layout::RowMajor) {
+                    parallel_for(M, PARALLEL_THRESHOLD_SIMPLE, [B_ptr, ldb, N_rhs, alpha](size_t rs, size_t re) {
+                        for (size_t i = rs; i < re; ++i) {
+                            T* LINALG_RESTRICT row = B_ptr + i * ldb;
+                            LINALG_VECTORIZE
+                            for (size_t j = 0; j < N_rhs; ++j) row[j] *= alpha;
+                        };
+                    });
+                } else {
+                    parallel_for(N_rhs, PARALLEL_THRESHOLD_SIMPLE, [B_ptr, ldb, M, alpha](size_t cs, size_t ce) {
+                        for (size_t j = cs; j < ce; ++j) {
+                            T* LINALG_RESTRICT col = B_ptr + j * ldb;
+                            LINALG_VECTORIZE
+                            for (size_t i = 0; i < M; ++i) col[i] *= alpha;
+                        };
+                    });
+                };
             };
             const bool left = (side == 'L' || side == 'l');
             auto& pool = ThreadPool::instance();
@@ -253,12 +300,16 @@ namespace linalg {
                 for (size_t t = 0; t < num_threads; ++t) {
                     futures.push_back(pool.enqueue([=, &A]() {
                         Vector<T> buf(M);
+                        T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
                         for (size_t j = t; j < N_rhs; j += num_threads) {
                             if constexpr (L == Layout::RowMajor) {
-                                for (size_t i = 0; i < M; ++i) buf[i] = B_ptr[i*ldb+j];
-                                trsm_col_solve(uplo, trans, diag, A, buf.data(), M);
-                                for (size_t i = 0; i < M; ++i) B_ptr[i*ldb+j] = buf[i];
+                                // Gather column j from row-major B into buf
+                                for (size_t i = 0; i < M; ++i) bp[i] = B_ptr[i*ldb + j];
+                                trsm_col_solve(uplo, trans, diag, A, bp, M);
+                                // Scatter back
+                                for (size_t i = 0; i < M; ++i) B_ptr[i*ldb + j] = bp[i];
                             } else {
+                                // Column-major: column j is already contiguous
                                 trsm_col_solve(uplo, trans, diag, A, B_ptr + j*ldb, M);
                             };
                         };
@@ -275,17 +326,18 @@ namespace linalg {
                 for (size_t t = 0; t < num_threads; ++t) {
                     futures.push_back(pool.enqueue([=, &A]() {
                         Vector<T> buf(N_rhs);
+                        T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
                         for (size_t i = t; i < M; i += num_threads) {
                             if constexpr (L == Layout::RowMajor) {
-                                T* rp = B_ptr + i*ldb;
-                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                                T* LINALG_RESTRICT rp = B_ptr + i*ldb;
+                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
                                 trsm_col_solve(uplo, trans_r, diag, A, rp, N_rhs);
-                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
                             } else {
                                 for (size_t j = 0; j < N_rhs; ++j) buf[j] = B_ptr[j*ldb+i];
-                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
+                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
                                 trsm_col_solve(uplo, trans_r, diag, A, buf.data(), N_rhs);
-                                if (conj_sides) for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
+                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
                                 for (size_t j = 0; j < N_rhs; ++j) B_ptr[j*ldb+i] = buf[j];
                             };
                         };
@@ -317,16 +369,16 @@ namespace linalg {
     namespace detail {
         // Triangle beta-scaling with beta=0 unconiditional fill
         template<typename T, Layout L>
-        void scale_triangle(char uplo, T beta, T* cp, size_t ldc, size_t N) {
+        LINALG_INLINE void scale_triangle(char uplo, T beta, T* LINALG_RESTRICT cp, size_t ldc, size_t N) {
             if (beta == T(1)) return;
             const bool upper = (uplo == 'U' || uplo == 'u');
             for (size_t i = 0; i < N; ++i) {
                 const size_t j0 = upper ? i : 0;
                 const size_t j1 = upper ? N : i + 1;
                 if constexpr (L == Layout::RowMajor) {
-                    T* row = cp + i * ldc;
+                    T* LINALG_RESTRICT row = cp + i * ldc;
                     if (beta == T(0)) std::fill(row + j0, row + j1, T(0));
-                    else for (size_t j = j0; j < j1; ++j) row[j] *= beta;
+                    else LINALG_VECTORIZE for (size_t j = j0; j < j1; ++j) row[j] *= beta;
                 } else {
                     for (size_t j = j0; j < j1; ++j) {
                         T& elem = cp[j*ldc+i];
@@ -338,7 +390,7 @@ namespace linalg {
 
         namespace kernels {
             template<typename T, Layout L>
-            void syrk_core(char uplo, T alpha, const T* ap, size_t lda, size_t N, size_t K, bool notrans, bool conjugate, T* cp, size_t ldc) {
+            LINALG_INLINE void syrk_core(char uplo, T alpha, const T* ap, size_t lda, size_t N, size_t K, bool notrans, bool conjugate, T* cp, size_t ldc) {
                 const bool upper = (uplo == 'U' || uplo == 'u');
                 // Element of A at logical outer-product index (vec, k).
                 // notrans -> row  vec of A: A(vec, k)
