@@ -348,6 +348,142 @@ namespace linalg {
     };
 
     namespace detail {
+        namespace kernels::trmv {
+            // notrans, upper: tp[i] = SUM{j>=i} A[i,j] * x[j]
+            template<typename T, Layout L, bool Unit>
+            LINALG_INLINE void trmv_notrans_upper(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
+                parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
+                    for (size_t i = rs; i < re; ++i) {
+                        T sum;
+                        if constexpr (L == Layout::RowMajor) {
+                            const T* LINALG_RESTRICT row = Ap + i * lda;
+                            sum = Unit ? xp[i] : row[i] * xp[i];
+                            LINALG_VECTORIZE
+                            for (size_t j = i + 1; j < N; ++j) sum += row[j] * xp[j];
+                        } else {
+                            // ColMajor: A[i,j] = Ap[j*lda + i]
+                            sum = Unit ? xp[i] : Ap[i * lda + i] * xp[i];
+                            // j > i: each column j is non-contiguous in i but x[j] is scalar
+                            for (size_t j = i + 1; j < N; ++j) sum += Ap[j * lda + i] * xp[j];
+                        };
+                        tp[i] = sum;
+                    };
+                });
+            };
+ 
+            // notrans, lower: tp[i] = SUM{j<=i} A[i,j] * x[j]
+            template<typename T, Layout L, bool Unit>
+            LINALG_INLINE void trmv_notrans_lower(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
+                parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
+                    for (size_t i = rs; i < re; ++i) {
+                        T sum = T(0);
+                        if constexpr (L == Layout::RowMajor) {
+                            const T* LINALG_RESTRICT row = Ap + i * lda;
+                            LINALG_VECTORIZE
+                            for (size_t j = 0; j < i; ++j) sum += row[j] * xp[j];
+                            sum += Unit ? xp[i] : row[i] * xp[i];
+                        } else {
+                            for (size_t j = 0; j < i; ++j) sum += Ap[j * lda + i] * xp[j];
+                            sum += Unit ? xp[i] : Ap[i * lda + i] * xp[i];
+                        };
+                        tp[i] = sum;
+                    };
+                });
+            };
+ 
+            // trans (or conj-trans), upper: tp[i] += conj?(A[i,j]) * x[j], j <= i
+            // Scatter formulation: for each j, update tp[k] for k <= j (upper column j).
+            // Uses thread-local accumulators (same pattern as gemv_kernel_col) to avoid data races on tp without atomics.
+            template<typename T, Layout L, bool Unit, bool DoConj>
+            LINALG_INLINE void trmv_trans_upper(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
+                auto& pool = ThreadPool::instance();
+                const size_t num_threads = std::min(pool.thread_count(),
+                    (N + PARALLEL_THRESHOLD_COMPUTE - 1) / PARALLEL_THRESHOLD_COMPUTE);
+                // Aval: load A[r,c] and optionally conjugate.
+                auto Aval = [=](size_t r, size_t c) -> T {
+                    T v;
+                    if constexpr (L == Layout::RowMajor) v = Ap[r * lda + c];
+                    else v = Ap[c * lda + r];
+                    if constexpr (DoConj) return conj(v);
+                    else return v;
+                };
+ 
+                if (num_threads <= 1) {
+                    // Serial scatter: for each column j of A (= row j of A^T), update tp[0..j] with A[k,j]*x[j] for k <= j.
+                    for (size_t j = 0; j < N; ++j) {
+                        const T xj = xp[j];
+                        tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+                        for (size_t k = 0; k < j; ++k) tp[k] += Aval(k, j) * xj;
+                    };
+                    return;
+                };
+                using AlignedVec = std::vector<T, AlignedAllocator<T>>;
+                std::vector<AlignedVec> locals(num_threads, AlignedVec(N, T(0)));
+                std::vector<std::future<void>> futures;
+                futures.reserve(num_threads);
+                for (size_t t = 0; t < num_threads; ++t) {
+                    futures.push_back(pool.enqueue([=, &locals, &Aval]() {
+                        T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
+                        for (size_t j = t; j < N; j += num_threads) {
+                            const T xj = xp[j];
+                            loc[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+                            for (size_t k = 0; k < j; ++k) loc[k] += Aval(k, j) * xj;
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
+                for (size_t t = 0; t < num_threads; ++t) {
+                    const T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
+                    LINALG_VECTORIZE for (size_t i = 0; i < N; ++i) tp[i] += loc[i];
+                };
+            };
+ 
+            // trans (or conj-trans), lower: scatter over rows of A^T that are columns
+            // of lower-triangular A, i.e. for each j update tp[j..N-1].
+            template<typename T, Layout L, bool Unit, bool DoConj>
+            LINALG_INLINE void trmv_trans_lower(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
+                auto& pool = ThreadPool::instance();
+                const size_t num_threads = std::min(pool.thread_count(),
+                    (N + PARALLEL_THRESHOLD_COMPUTE - 1) / PARALLEL_THRESHOLD_COMPUTE);
+ 
+                auto Aval = [=](size_t r, size_t c) -> T {
+                    T v;
+                    if constexpr (L == Layout::RowMajor) v = Ap[r * lda + c];
+                    else v = Ap[c * lda + r];
+                    if constexpr (DoConj) return conj(v);
+                    else return v;
+                };
+ 
+                if (num_threads <= 1) {
+                    for (size_t j = 0; j < N; ++j) {
+                        const T xj = xp[j];
+                        tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+                        for (size_t k = j + 1; k < N; ++k) tp[k] += Aval(k, j) * xj;
+                    };
+                    return;
+                };
+                using AlignedVec = std::vector<T, AlignedAllocator<T>>;
+                std::vector<AlignedVec> locals(num_threads, AlignedVec(N, T(0)));
+                std::vector<std::future<void>> futures;
+                futures.reserve(num_threads);
+                for (size_t t = 0; t < num_threads; ++t) {
+                    futures.push_back(pool.enqueue([=, &locals, &Aval]() {
+                        T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
+                        for (size_t j = t; j < N; j += num_threads) {
+                            const T xj = xp[j];
+                            loc[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+                            for (size_t k = j + 1; k < N; ++k) loc[k] += Aval(k, j) * xj;
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
+                for (size_t t = 0; t < num_threads; ++t) {
+                    const T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
+                    LINALG_VECTORIZE for (size_t i = 0; i < N; ++i) tp[i] += loc[i];
+                };
+            };
+        };
+
         template<typename T, typename EM>
         LINALG_INLINE void trmv_impl(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, T* xp, size_t N) {
             const auto& A  = A_expr.self();
@@ -355,47 +491,59 @@ namespace linalg {
             const bool unit = (diag == 'U' || diag == 'u');
             const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
             const bool do_conj = (trans == 'C' || trans == 'c');
-            // Accumulate into a zeroed temporary — avoids read-after-write aliasing
+
+            auto a_info = raw_mat_info<T>(A_expr);
+            Matrix<T, Layout::RowMajor> A_tmp;
+            const T* Ap;
+            size_t lda;
+            Layout layout;
+            if (a_info) {
+                Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
+            } else {
+                A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+                Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
+            };
+ 
+            // Zero-initialised output buffer — breaks x/tp aliasing.
             Vector<T> tmp(N, T(0));
             T* LINALG_RESTRICT tp = detail::assume_aligned<64>(tmp.data());
-            if (!do_trans) {
-                // x <- A * x_orig
-                for (size_t i = 0; i < N; ++i) {
-                    T sum = T(0);
-                    if (upper) {
-                        if (!unit) sum = static_cast<T>(A(i, i)) * xp[i];
-                        else sum = xp[i];
-                        LINALG_VECTORIZE for (size_t j = i + 1; j < N; ++j)
-                            sum += static_cast<T>(A(i, j)) * xp[j];
-                    } else {
-                        LINALG_VECTORIZE for (size_t j = 0; j < i; ++j) sum += static_cast<T>(A(i, j)) * xp[j];
-                        if (!unit) sum += static_cast<T>(A(i, i)) * xp[i];
-                        else sum += xp[i];
-                    };
-                    tp[i] = sum;
-                };
-            } else {
-                // x <- A^T * x_orig  (or A^H * x_orig)
-                // Scatter x_orig[j] * A[k,j] (or conj(A[k,j])) into tp[k]
-                for (size_t j = 0; j < N; ++j) {
-                    const T xj = xp[j];
-                    // Diagonal contribution
-                    T ajj = unit ? T(1) : (do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j)));
-                    tp[j] += ajj * xj;
-                    if (upper) {
-                        for (size_t k = 0; k < j; ++k) {
-                            T akj = do_conj ? conj(static_cast<T>(A(k, j))) : static_cast<T>(A(k, j));
-                            tp[k] += akj * xj;
-                        };
-                    } else {
-                        for (size_t k = j + 1; k < N; ++k) {
-                            T akj = do_conj ? conj(static_cast<T>(A(k, j))) : static_cast<T>(A(k, j));
-                            tp[k] += akj * xj;
-                        };
-                    };
+            const T* LINALG_RESTRICT xa = detail::assume_aligned<64>(xp);
+
+            // Dispatch to the eight specialised kernel. The if-constexpr inside each kernel eliminates the layout branch at instantiation time.
+            auto dispatch_notrans = [&](auto Unit_tag) {
+                constexpr bool U = Unit_tag.value;
+                if (layout == Layout::RowMajor) {
+                    if (upper) kernels::trmv::trmv_notrans_upper<T, Layout::RowMajor, U>(Ap, lda, xa, tp, N);
+                    else kernels::trmv::trmv_notrans_lower<T, Layout::RowMajor, U>(Ap, lda, xa, tp, N);
+                } else {
+                    if (upper) kernels::trmv::trmv_notrans_upper<T, Layout::ColMajor, U>(Ap, lda, xa, tp, N);
+                    else kernels::trmv::trmv_notrans_lower<T, Layout::ColMajor, U>(Ap, lda, xa, tp, N);
                 };
             };
-            // Copy result back
+ 
+            auto dispatch_trans = [&](auto Unit_tag, auto Conj_tag) {
+                constexpr bool U = Unit_tag.value;
+                constexpr bool C = Conj_tag.value;
+                if (layout == Layout::RowMajor) {
+                    if (upper) kernels::trmv::trmv_trans_upper<T, Layout::RowMajor, U, C>(Ap, lda, xa, tp, N);
+                    else kernels::trmv::trmv_trans_lower<T, Layout::RowMajor, U, C>(Ap, lda, xa, tp, N);
+                } else {
+                    if (upper) kernels::trmv::trmv_trans_upper<T, Layout::ColMajor, U, C>(Ap, lda, xa, tp, N);
+                    else kernels::trmv::trmv_trans_lower<T, Layout::ColMajor, U, C>(Ap, lda, xa, tp, N);
+                };
+            };
+ 
+            // Encode runtime bools as std::integral_constant so template args are resolved at compile time inside each kernel.
+            if (!do_trans) {
+                if (unit) dispatch_notrans(std::true_type{});
+                else      dispatch_notrans(std::false_type{});
+            } else {
+                if (unit && do_conj) dispatch_trans(std::true_type{},  std::true_type{});
+                if (unit && !do_conj) dispatch_trans(std::true_type{},  std::false_type{});
+                if (!unit && do_conj) dispatch_trans(std::false_type{}, std::true_type{});
+                if (!unit && !do_conj) dispatch_trans(std::false_type{}, std::false_type{});
+            };
+ 
             std::copy(tp, tp + N, xp);
         };
 
