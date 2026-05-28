@@ -21,7 +21,7 @@ namespace linalg {
         constexpr size_t QR_BLOCK = 64;
         // Returns pair (v, beta): (I - beta*v*v^H)*x = norm(x)*sign(x[0])*e_0
         template<typename T>
-        std::pair<Vector<T>, double> householder_reflector(const Vector<T>& x) {
+        LINALG_INLINE std::pair<Vector<T>, double> householder_reflector(const Vector<T>& x) {
             const size_t n = x.size();
             Vector<T> v = x;
             double sigma = 0.0;
@@ -44,7 +44,7 @@ namespace linalg {
         };
 
         template<typename T, Layout L>
-        double col_norm_sq(const Matrix<T, L>& W, size_t col, size_t row0) {
+        LINALG_INLINE double col_norm_sq(const Matrix<T, L>& W, size_t col, size_t row0) {
             double s = 0.0;
             for (size_t i = row0; i < W.rows(); ++i) s += std::norm(W(i, col));
             return s;
@@ -58,7 +58,9 @@ namespace linalg {
             T* const W_base = W.data() + k * lda + k;
             // Materialise conj(v) for the transposed GEMV
             Vector<T> cv(len);
-            for (size_t i = 0; i < len; ++i) cv[i] = linalg::conj(v[i]);
+            const T* LINALG_RESTRICT vp = detail::assume_aligned<64>(v.data());
+            T* LINALG_RESTRICT cp = detail::assume_aligned<64>(cv.data());
+            LINALG_VECTORIZE for (size_t i = 0; i < len; ++i) cp[i] = linalg::conj(vp[i]);
             // Step 1: w = W_sub^T * cv (layout-flipped raw GEMV)
             Vector<T> w(ncols, T(0));
             if constexpr (L == Layout::RowMajor)
@@ -133,6 +135,7 @@ namespace linalg {
             Matrix<T, L> V(len, nb, T(0));
             for (size_t j = 0; j < nb; ++j) {
                 const Vector<T>& vj = vs[k + j];
+                //LINALG_VECTORIZE // Discarded by compiler.
                 for (size_t i = 0; i < vj.size(); ++i) V(i + j, j) = vj[i];
             };
             // Extract W_trail: W[k:m, j0:n] ->  temporary (m-k) * ncols_trail
@@ -271,6 +274,7 @@ namespace linalg {
         const size_t r_rows = (mode == QRMode::Complete) ? m : K;
         Matrix<T, L> R(r_rows, n, T(0));
         for (size_t i = 0; i < r_rows && i < m; ++i)
+            LINALG_VECTORIZE
             for (size_t j = i; j < n; ++j)
                 R(i, j) = W(i, j);
         // Q accumulation: builds Q = H_0*H_1*…*H_{K-1} by initialising Q = I_{m*q_cols} and
