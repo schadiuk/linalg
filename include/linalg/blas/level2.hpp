@@ -75,6 +75,15 @@ namespace linalg {
             return out;
         };
 
+        // Pointer resolution: use raw pointer if available, otherwise materialise. Returns {ptr, stride}.  When stride==1 the pointer is contiguous.
+        template<typename T, typename EV>
+        LINALG_INLINE std::pair<const T*, size_t> resolve_vec(const VecExpr<EV>& expr, Vector<T>& tmp) {
+            auto info = raw_vec_ptr<T>(expr);
+            if (info) return { info->data, info->stride };
+            tmp = materialise<T>(expr);
+            return { tmp.data(), size_t(1) };
+        };
+
         // Namespace containing optimised kernels
         namespace kernels {
             // Fused pointer-level gemv kernel for RowMajor layout
@@ -142,9 +151,9 @@ namespace linalg {
             };
 
             // Shared SAXPY-rank-1 kernel used by both ger and gerc.
-            // yp has already been conjugated for gerc before this call.
-            template<typename T, Layout L>
+            template<typename T, Layout L, bool Conj = false>
             LINALG_INLINE void ger_kernel(T alpha, const T* LINALG_RESTRICT xp, const T* LINALG_RESTRICT yp, T* A_ptr, size_t lda, size_t M, size_t N) {
+                if (M == 0 || N == 0) return;
                 const T* xa = detail::assume_aligned<64>(xp);
                 const T* ya = detail::assume_aligned<64>(yp);
                 if constexpr (L == Layout::RowMajor) {
@@ -153,14 +162,21 @@ namespace linalg {
                         for (size_t i = rs; i < re; ++i) {
                             const T xi = alpha * xa[i];
                             T* LINALG_RESTRICT a_row = A_ptr + i * lda;
-                            LINALG_VECTORIZE for (size_t j = 0; j < N; ++j) a_row[j] += xi * ya[j];
+                            if constexpr (Conj) {
+                                LINALG_VECTORIZE
+                                for (size_t j = 0; j < N; ++j) a_row[j] += xi * conj(ya[j]);
+                            } else {
+                                LINALG_VECTORIZE
+                                for (size_t j = 0; j < N; ++j) a_row[j] += xi * ya[j];
+                            };
                         };
                     });
                 } else {
                     // Parallel over columns
                     parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t js, size_t je) {
                         for (size_t j = js; j < je; ++j) {
-                            const T yj = alpha * ya[j];
+                            const T yj = alpha * (Conj ? conj(ya[j]) : ya[j]);
+                            if (yj == T(0)) continue;
                             T* LINALG_RESTRICT a_col = A_ptr + j * lda;
                             LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) a_col[i] += xa[i] * yj;
                         };
@@ -172,22 +188,15 @@ namespace linalg {
         // Dispatch: extracts raw pointers whenever possible, else materialises
         template<typename T, Layout L, typename EM, typename EV>
         LINALG_INLINE void gemv_impl(T alpha, const MatExpr<EM>& a_expr, const VecExpr<EV>& x_expr, T beta, T* y_ptr, size_t M, size_t N) {
-            // Materialise x if needed
-            auto x_info = detail::raw_vec_ptr<T>(x_expr);
             Vector<T> x_tmp;
-            const T* x_ptr; size_t incx;
-            if (x_info) { x_ptr = x_info->data; incx = x_info->stride; }
-            else { x_tmp = materialise<T>(x_expr); x_ptr = x_tmp.data(); incx = 1; };
-            // Resolving Matrix
+            auto [x_ptr, incx] = resolve_vec<T>(x_expr, x_tmp);
             auto a_info = raw_mat_info<T>(a_expr);
             if (a_info) {
-                // Fast path: direct pointer with correct layout
                 if (a_info->layout == Layout::RowMajor)
                     kernels::gemv_kernel_row(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
                 else
                     kernels::gemv_kernel_col(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
             } else {
-                // Materialise A into Layout L, then dispatch
                 Matrix<T, L> A_tmp(M, N);
                 A_tmp = a_expr;
                 if constexpr (L == Layout::RowMajor)
@@ -200,7 +209,7 @@ namespace linalg {
 
     // y = alpha * A * x + beta * y. Public interface output: Vector<T>
     template<typename T, Layout L = Layout::RowMajor, typename EM, typename EV>
-    LINALG_INLINE void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta,  Vector<T>& y) {
+    LINALG_INLINE void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta, Vector<T>& y) {
         const size_t M = A.self().rows();
         const size_t N = A.self().cols();
         BOUNDS_CHECK(M == y.size() && N == x.self().size());
@@ -221,23 +230,24 @@ namespace linalg {
 
     namespace detail {
         template<typename T, Layout L, typename EX, typename EY>
-        LINALG_INLINE void ger_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr,
-                    T* A_ptr, size_t lda, size_t M, size_t N) {
-            // Materialise x and y to avoid repeated expression traversal
-            const Vector<T> xv = materialise<T>(x_expr);
-            const Vector<T> yv = materialise<T>(y_expr);
-            kernels::ger_kernel<T, L>(alpha, xv.data(), yv.data(), A_ptr, lda, M, N);
+        LINALG_INLINE void ger_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr, T* A_ptr, size_t lda, size_t M, size_t N) {
+            Vector<T> xtmp, ytmp;
+            auto [xp, incx] = resolve_vec<T>(x_expr, xtmp);
+            auto [yp, incy] = resolve_vec<T>(y_expr, ytmp);
+            // If strides are non-unit, materialise to unit-stride buffers so the inner SAXPY loop can use LINALG_VECTORIZE without gather penalties.
+            if (incx != 1) { xtmp = materialise<T>(x_expr); xp = xtmp.data(); }
+            if (incy != 1) { ytmp = materialise<T>(y_expr); yp = ytmp.data(); }
+            kernels::ger_kernel<T, L, false>(alpha, xp, yp, A_ptr, lda, M, N);
         };
 
         template<typename T, Layout L, typename EX, typename EY>
-        LINALG_INLINE void gerc_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr,
-                    T* A_ptr, size_t lda, size_t M, size_t N) {
-            const Vector<T> xv = materialise<T>(x_expr);
-            Vector<T> yv = materialise<T>(y_expr);
-            T* LINALG_RESTRICT yp = detail::assume_aligned<64>(yv.data());
-            LINALG_VECTORIZE
-            for (size_t j = 0; j < N; ++j) yp[j] = conj(yp[j]);
-            kernels::ger_kernel<T, L>(alpha, xv.data(), yp, A_ptr, lda, M, N);
+        LINALG_INLINE void gerc_impl(T alpha, const VecExpr<EX>& x_expr, const VecExpr<EY>& y_expr, T* A_ptr, size_t lda, size_t M, size_t N) {
+            Vector<T> xtmp, ytmp;
+            auto [xp, incx] = resolve_vec<T>(x_expr, xtmp);
+            auto [yp, incy] = resolve_vec<T>(y_expr, ytmp);
+            if (incx != 1) { xtmp = materialise<T>(x_expr); xp = xtmp.data(); };
+            if (incy != 1) { ytmp = materialise<T>(y_expr); yp = ytmp.data(); };
+            kernels::ger_kernel<T, L, true>(alpha, xp, yp, A_ptr, lda, M, N);
         };
     };
 
@@ -388,6 +398,115 @@ namespace linalg {
             // Copy result back
             std::copy(tp, tp + N, xp);
         };
+
+        namespace kernels {
+            template<typename T, Layout L, bool DoConj>
+            LINALG_INLINE void symv_hemv_kernel(T alpha, const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T beta, T* LINALG_RESTRICT yp, size_t N, bool upper) {
+                if (beta == T(0)) std::fill(yp, yp + N, T(0));
+                else if (beta != T(1)) {
+                    LINALG_VECTORIZE for (size_t i = 0; i < N; ++i) yp[i] *= beta;
+                };
+                if (alpha == T(0)) return;
+                // Inline element accessor: loads A[r,c] respecting layout.
+                auto Aload = [=](size_t r, size_t c) -> T {
+                    if constexpr (L == Layout::RowMajor) return Ap[r * lda + c];
+                    else return Ap[c * lda + r];
+                };
+                // Two-vector sweep: accumulates both the direct (row) and symmetric (column) contributions in a single pass over the stored triangle, touching each stored element exactly once.
+                if (N < PARALLEL_THRESHOLD_COMPUTE) {
+                    if (upper) {
+                        for (size_t i = 0; i < N; ++i) {
+                            // Diagonal (real part for Hermitian)
+                            const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
+                            T sum_i = aii * xp[i];
+                            for (size_t j = i + 1; j < N; ++j) {
+                                const T aij = Aload(i, j);
+                                sum_i += aij * xp[j];
+                                // Symmetric contribution: A[j,i] = conj(A[i,j]) for Hermitian
+                                if constexpr (DoConj) yp[j] += alpha * conj(aij) * xp[i];
+                                else yp[j] += alpha * aij * xp[i];
+                            };
+                            yp[i] += alpha * sum_i;
+                        };
+                    } else {
+                        // Lower storage
+                        for (size_t i = 0; i < N; ++i) {
+                            const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
+                            T sum_i = aii * xp[i];
+                            for (size_t j = 0; j < i; ++j) {
+                                const T aij = Aload(i, j);
+                                sum_i += aij * xp[j];
+                                if constexpr (DoConj) yp[j] += alpha * conj(aij) * xp[i];
+                                else yp[j] += alpha * aij * xp[i];
+                            };
+                            yp[i] += alpha * sum_i;
+                        };
+                    };
+                    return;
+                };
+                // Parallel path
+                auto& pool = ThreadPool::instance();
+                const size_t num_threads = std::min(pool.thread_count(), (N + PARALLEL_THRESHOLD_COMPUTE - 1) / PARALLEL_THRESHOLD_COMPUTE);
+                // row_acc[i] = direct dot-product contribution for row i
+                // scatter[t][j] = symmetric contributions accumulated by thread t
+                using AlignedVec = std::vector<T, AlignedAllocator<T>>;
+                std::vector<AlignedVec> row_acc(num_threads, AlignedVec(N, T(0)));
+                std::vector<AlignedVec> scatter(num_threads, AlignedVec(N, T(0)));
+                std::vector<std::future<void>> futures;
+                futures.reserve(num_threads);
+                const size_t chunk = N / num_threads;
+                const size_t remainder = N % num_threads;
+                size_t offset = 0;
+                for (size_t t = 0; t < num_threads; ++t) {
+                    const size_t cnt = chunk + (t < remainder ? 1 : 0);
+                    const size_t t_rs = offset;
+                    const size_t t_re = offset + cnt;
+                    offset += cnt;
+                    futures.push_back(pool.enqueue([=, &row_acc, &scatter, &Aload]() {
+                        T* LINALG_RESTRICT racc = detail::assume_aligned<64>(row_acc[t].data());
+                        T* LINALG_RESTRICT scat = detail::assume_aligned<64>(scatter[t].data());
+                        if (upper) {
+                            for (size_t i = t_rs; i < t_re; ++i) {
+                                const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
+                                T sum_i = aii * xp[i];
+                                for (size_t j = i + 1; j < N; ++j) {
+                                    const T aij = Aload(i, j);
+                                    sum_i += aij * xp[j];
+                                    if constexpr (DoConj) scat[j] += conj(aij) * xp[i];
+                                    else scat[j] += aij * xp[i];
+                                };
+                                racc[i] = sum_i;
+                            };
+                        } else {
+                            for (size_t i = t_rs; i < t_re; ++i) {
+                                const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
+                                T sum_i = aii * xp[i];
+                                for (size_t j = 0; j < i; ++j) {
+                                    const T aij = Aload(i, j);
+                                    sum_i += aij * xp[j];
+                                    if constexpr (DoConj) scat[j] += conj(aij) * xp[i];
+                                    else scat[j] += aij * xp[i];
+                                };
+                                racc[i] = sum_i;
+                            };
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
+
+                parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [&](size_t rs, size_t re) {
+                    for (size_t i = rs; i < re; ++i) {
+                        T acc = row_acc[0][i];
+                        LINALG_VECTORIZE
+                        for (size_t t = 1; t < num_threads; ++t) acc += row_acc[t][i];
+                        T sct = scatter[0][i];
+                        LINALG_VECTORIZE
+                        for (size_t t = 1; t < num_threads; ++t) sct += scatter[t][i];
+                        yp[i] += alpha * (acc + sct);
+                    };
+                });
+            };
+        };
     };
 
     // TRiangular Matrix-Vector product: x = op(A) * x
@@ -416,40 +535,28 @@ namespace linalg {
         const size_t N = A.rows();
         BOUNDS_CHECK(A.cols() == N && x_expr.self().size() == N && y.size() == N);
         if (N == 0) return;
-        // Materialise x to avoid repeated expression evaluation per element
-        const Vector<T> xv = detail::materialise<T>(x_expr);
-        const T* LINALG_RESTRICT xp = detail::assume_aligned<64>(xv.data());
+
+        auto a_info = detail::raw_mat_info<T>(A_expr);
+        Matrix<T, Layout::RowMajor> A_tmp;
+        const T* Ap; size_t lda; Layout layout;
+        if (a_info) {
+            Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
+        } else {
+            A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+            Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
+        };
+        Vector<T> xtmp;
+        auto [xp_raw, incx] = detail::resolve_vec<T>(x_expr, xtmp);
+        // Force unit-stride x for the kernel
+        if (incx != 1) { xtmp = detail::materialise<T>(x_expr); xp_raw = xtmp.data(); }
+        const T* LINALG_RESTRICT xp = detail::assume_aligned<64>(xp_raw);
         T* LINALG_RESTRICT yp = detail::assume_aligned<64>(y.data());
-        if (beta == T(0)) std::fill(yp, yp + N, T(0));
-        else if (beta != T(1)) {
-            LINALG_VECTORIZE for (size_t i = 0; i < N; ++i) yp[i] *= beta;
-        }
-        if (alpha == T(0)) return;
+
         const bool upper = (uplo == 'U' || uplo == 'u');
-        parallel_for(N, PARALLEL_THRESHOLD_COMPUTE,
-            [&A, xp, yp, alpha, N, upper](size_t rs, size_t re) {
-                for (size_t i = rs; i < re; ++i) {
-                    T sum = static_cast<T>(A(i, i)) * xp[i];  // diagonal
-                    if (upper) {
-                        // Row i from upper triangle  (j > i)
-                        LINALG_VECTORIZE
-                        for (size_t j = i + 1; j < N; ++j)
-                            sum += static_cast<T>(A(i, j)) * xp[j];
-                        // Column i from upper triangle used via symmetry  (j < i)
-                        for (size_t j = 0; j < i; ++j)
-                            sum += static_cast<T>(A(j, i)) * xp[j];
-                    } else {
-                        // Row i from lower triangle  (j < i)
-                        LINALG_VECTORIZE
-                        for (size_t j = 0; j < i; ++j)
-                            sum += static_cast<T>(A(i, j)) * xp[j];
-                        // Column i from lower triangle via symmetry  (j > i)
-                        for (size_t j = i + 1; j < N; ++j)
-                            sum += static_cast<T>(A(j, i)) * xp[j];
-                    };
-                    yp[i] += alpha * sum;
-                };
-            });
+        if (layout == Layout::RowMajor)
+            detail::kernels::symv_hemv_kernel<T, Layout::RowMajor, false>(alpha, Ap, lda, xp, beta, yp, N, upper);
+        else
+            detail::kernels::symv_hemv_kernel<T, Layout::ColMajor, false>(alpha, Ap, lda, xp, beta, yp, N, upper);
     };
 
     // HErmitian Matrix-Vector product:  y = alpha * A * x + beta * y, where A is Hermitian Matrix
@@ -459,35 +566,27 @@ namespace linalg {
         const size_t N = A.rows();
         BOUNDS_CHECK(A.cols() == N && x_expr.self().size() == N && y.size() == N);
         if (N == 0) return;
-        const Vector<T> xv = detail::materialise<T>(x_expr);
-        const T* LINALG_RESTRICT xp = detail::assume_aligned<64>(xv.data());
+
+        auto a_info = detail::raw_mat_info<T>(A_expr);
+        Matrix<T, Layout::RowMajor> A_tmp;
+        const T* Ap; size_t lda; Layout layout;
+        if (a_info) {
+            Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
+        } else {
+            A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+            Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
+        };
+ 
+        Vector<T> xtmp;
+        auto [xp_raw, incx] = detail::resolve_vec<T>(x_expr, xtmp);
+        if (incx != 1) { xtmp = detail::materialise<T>(x_expr); xp_raw = xtmp.data(); }
+        const T* LINALG_RESTRICT xp = detail::assume_aligned<64>(xp_raw);
         T* LINALG_RESTRICT yp = detail::assume_aligned<64>(y.data());
-        if (beta == T(0)) std::fill(yp, yp + N, T(0));
-        else if (beta != T(1)) {
-            LINALG_VECTORIZE for (size_t i = 0; i < N; ++i) yp[i] *= beta;
-        }
-        if (alpha == T(0)) return;
+ 
         const bool upper = (uplo == 'U' || uplo == 'u');
-        parallel_for(N, PARALLEL_THRESHOLD_COMPUTE,
-            [&A, xp, yp, alpha, N, upper](size_t rs, size_t re) {
-                for (size_t i = rs; i < re; ++i) {
-                    // Diagonal must be real; the cast drops any spurious imaginary part
-                    T sum = static_cast<T>(std::real(static_cast<T>(A(i, i)))) * xp[i];
-                    if (upper) {
-                        LINALG_VECTORIZE 
-                        for (size_t j = i + 1; j < N; ++j)
-                            sum += static_cast<T>(A(i, j)) * xp[j];
-                        for (size_t j = 0; j < i; ++j)
-                            sum += conj(static_cast<T>(A(j, i))) * xp[j]; // conj symmetry
-                    } else {
-                        LINALG_VECTORIZE 
-                        for (size_t j = 0; j < i; ++j)
-                            sum += static_cast<T>(A(i, j)) * xp[j];
-                        for (size_t j = i + 1; j < N; ++j)
-                            sum += conj(static_cast<T>(A(j, i))) * xp[j]; // conj symmetry
-                    };
-                    yp[i] += alpha * sum;
-                };
-            });
+        if (layout == Layout::RowMajor)
+            detail::kernels::symv_hemv_kernel<T, Layout::RowMajor, true>(alpha, Ap, lda, xp, beta, yp, N, upper);
+        else
+            detail::kernels::symv_hemv_kernel<T, Layout::ColMajor, true>(alpha, Ap, lda, xp, beta, yp, N, upper);
     };
 };
