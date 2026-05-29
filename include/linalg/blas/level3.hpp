@@ -258,17 +258,24 @@ namespace linalg {
             };
         };
 
+        // Block width for the RHS panel in the side='L' path.
+        static constexpr size_t TRSM_RHS_BLOCK = 64;
+
         template<typename T, Layout L, typename AM>
         void trsm_impl(char side, char uplo, char trans, char diag, T alpha,  const AM& A, T* B_ptr, size_t ldb, size_t M, size_t N_rhs) {
             if (M == 0 || N_rhs == 0) return;
             // Scale B by alpha (beta=0 fills unconditionally)
             if (alpha == T(0)) {
                 if constexpr (L == Layout::RowMajor)
-                    for (size_t i = 0; i < M; ++i)
-                        std::fill(B_ptr + i*ldb, B_ptr + i*ldb + N_rhs, T(0));
+                    parallel_for(M, PARALLEL_THRESHOLD_SIMPLE, [B_ptr, ldb, N_rhs](size_t rs, size_t re) {
+                        for (size_t i = rs; i < re; ++i)
+                            std::fill(B_ptr + i*ldb, B_ptr + i*ldb + N_rhs, T(0));
+                    });
                 else
-                    for (size_t j = 0; j < N_rhs; ++j)
-                        std::fill(B_ptr + j*ldb, B_ptr + j*ldb + M, T(0));
+                    parallel_for(N_rhs, PARALLEL_THRESHOLD_SIMPLE, [B_ptr, ldb, M](size_t cs, size_t ce) {
+                        for (size_t j = cs; j < ce; ++j)
+                            std::fill(B_ptr + j*ldb, B_ptr + j*ldb + M, T(0));
+                    });
                 return;
             };
             if (alpha != T(1)) {
@@ -293,6 +300,7 @@ namespace linalg {
             const bool left = (side == 'L' || side == 'l');
             auto& pool = ThreadPool::instance();
             if (left) {
+                /*
                 // Each column of B is an independent trsv
                 const size_t num_threads = std::min(pool.thread_count(), N_rhs);
                 std::vector<std::future<void>> futures; 
@@ -316,29 +324,156 @@ namespace linalg {
                     }));
                 };
                 for (auto& f : futures) f.get();
+                */
+                const size_t n_blocks = (N_rhs + TRSM_RHS_BLOCK - 1) / TRSM_RHS_BLOCK;
+                const size_t num_threads = std::min(pool.thread_count(), n_blocks);
+                std::vector<std::future<void>> futures;
+                futures.reserve(num_threads);
+                for (size_t t = 0; t < num_threads; ++t) {
+                    futures.push_back(pool.enqueue([=, &A]() {
+                        // Thread-local column buffer: M rows × up-to-TRSM_RHS_BLOCK cols, stored column-major so trsm_col_solve sees contiguous data.
+                        using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
+                        AlignedBuf buf(M * TRSM_RHS_BLOCK);
+                        for (size_t blk = t; blk < n_blocks; blk += num_threads) {
+                            const size_t j0 = blk * TRSM_RHS_BLOCK;
+                            const size_t j1 = std::min(j0 + TRSM_RHS_BLOCK, N_rhs);
+                            const size_t nb = j1 - j0;  // actual block width
+                            T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
+                            if constexpr (L == Layout::RowMajor) {
+                                // Gather B[0:M, j0:j1] into col-major buffer bp[col*M + row]
+                                for (size_t i = 0; i < M; ++i) {
+                                    const T* LINALG_RESTRICT src = B_ptr + i * ldb + j0;
+                                    LINALG_VECTORIZE
+                                    for (size_t jj = 0; jj < nb; ++jj) bp[jj * M + i] = src[jj];
+                                };
+                                // Solve each column of the block (now contiguous)
+                                for (size_t jj = 0; jj < nb; ++jj)
+                                    trsm_col_solve(uplo, trans, diag, A, bp + jj * M, M);
+                                // Scatter back
+                                for (size_t i = 0; i < M; ++i) {
+                                    T* LINALG_RESTRICT dst = B_ptr + i * ldb + j0;
+                                    LINALG_VECTORIZE
+                                    for (size_t jj = 0; jj < nb; ++jj) dst[jj] = bp[jj * M + i];
+                                };
+                            } else {
+                                // ColMajor: columns j0...j1-1 are already contiguous segments; use a look-ahead panel update so A is traversed once per block.
+
+                                const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
+                                const bool upper = (uplo == 'U' || uplo == 'u');
+                                // Determine whether the look-ahead sweep goes forward (k=0...M) or backward (k=M-1...0).  Forward sweep: lower+notrans or upper+trans.
+                                const bool forward = (upper == do_trans);
+                                // Minimum size to justify the GEMM update overhead
+                                const size_t LOOKAHEAD_THRESH = 32;
+                                if (M >= LOOKAHEAD_THRESH && nb > 1) {
+                                    // Copy the RHS block into a contiguous scratch so gemm_direct always sees a tight leading-dimension layout.
+                                    for (size_t jj = 0; jj < nb; ++jj) {
+                                        const T* src = B_ptr + (j0 + jj) * ldb;
+                                        T* LINALG_RESTRICT dst = bp + jj * M;
+                                        LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) dst[i] = src[i];
+                                    };
+                                    constexpr size_t kb = L2_BLOCK / 2; // reuse blocked size constant
+                                    if (forward) {
+                                        for (size_t k = 0; k < M; k += kb) {
+                                            const size_t ke = std::min(k + kb, M);
+                                            const size_t ks = ke - k;  // actual panel height
+                                            // Solve the panel rows: bp[k:ke, 0:nb]
+                                            for (size_t jj = 0; jj < nb; ++jj)
+                                                trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
+                                            // Look-ahead update
+                                            if (ke < M) {
+                                                // Build a tight sub-matrix for A[ke:M, k:ke]
+                                                const size_t rows_rem = M - ke;
+                                                // Extract A panel into a temporary col-major buffer
+                                                AlignedBuf a_panel(rows_rem * ks);
+                                                T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
+                                                for (size_t kk = 0; kk < ks; ++kk) {
+                                                    LINALG_VECTORIZE
+                                                    for (size_t ii = 0; ii < rows_rem; ++ii)
+                                                        ap[kk * rows_rem + ii] = static_cast<T>(A(ke + ii, k + kk));
+                                                };
+                                                gemm_direct<T, Layout::ColMajor>(T(-1),
+                                                    ap, rows_rem, // A: rows_rem×ks, col-major lda=rows_rem
+                                                    bp + k, M, // B: ks*nb, col-major lda=M
+                                                    bp + ke, M, // C: rows_rem×nb, col-major lda=M
+                                                    rows_rem, nb, ks);
+                                            };
+                                        };
+                                    } else {
+                                        // Backward sweep (upper+notrans or lower+trans)
+                                        size_t k = M;
+                                        while (k > 0) {
+                                            const size_t ke = k;
+                                            k = (ke > kb) ? ke - kb : 0;
+                                            const size_t ks = ke - k;
+                                            // Solve bp[k:ke, 0:nb]
+                                            for (size_t jj = 0; jj < nb; ++jj)
+                                                trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
+                                            // Update bp[0:k, 0:nb] -= A[0:k, k:ke] * bp[k:ke, 0:nb]
+                                            if (k > 0) {
+                                                AlignedBuf a_panel(k * ks);
+                                                T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
+                                                for (size_t kk = 0; kk < ks; ++kk) {
+                                                    LINALG_VECTORIZE
+                                                    for (size_t ii = 0; ii < k; ++ii)
+                                                        ap[kk * k + ii] = static_cast<T>(A(ii, k + kk));
+                                                };
+                                                gemm_direct<T, Layout::ColMajor>(T(-1),
+                                                    ap, k, // A: k×ks col-major lda=k
+                                                    bp + k, M, // B: ks×nb col-major lda=M
+                                                    bp, M, // C: k×nb col-major lda=M
+                                                    k, nb, ks);
+                                            };
+                                        };
+                                    };
+                                    // Write back to B
+                                    for (size_t jj = 0; jj < nb; ++jj) {
+                                        T* dst = B_ptr + (j0 + jj) * ldb;
+                                        const T* LINALG_RESTRICT src = bp + jj * M;
+                                        LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) dst[i] = src[i];
+                                    };
+                                } else {
+                                    // Small M or single column: simple column-by-column solve
+                                    for (size_t jj = 0; jj < nb; ++jj)
+                                        trsm_col_solve(uplo, trans, diag, A, B_ptr + (j0 + jj) * ldb, M);
+                                };
+                            };
+                        };
+                    }));
+                };
+                for (auto& f : futures) f.get();
             } else {
                 // Dual: x*op(A)=b is solved as op_dual(A)*x^T=b^T per row.
                 const bool conj_sides = (trans == 'C' || trans == 'c');
                 //char trans_r = (trans == 'N' || trans == 'n') ? 'T' : (trans == 'T' || trans == 't') ? 'N' : 'N'; // 'C': solve A, conj b/x
                 char trans_r = (trans == 'N' || trans == 'n') ? 'T' : 'N';
                 const size_t num_threads = std::min(pool.thread_count(), M);
-                std::vector<std::future<void>> futures; futures.reserve(num_threads);
+                std::vector<std::future<void>> futures;
+                futures.reserve(num_threads);
+                const size_t chunk = M / num_threads;
+                const size_t rem = M % num_threads;
+                size_t offset = 0;
                 for (size_t t = 0; t < num_threads; ++t) {
+                    const size_t i0 = offset;
+                    const size_t i1 = i0 + chunk + (t < rem ? 1 : 0);
+                    offset = i1;
                     futures.push_back(pool.enqueue([=, &A]() {
-                        Vector<T> buf(N_rhs);
+                        // Reusable row buffer — allocated once per thread, not once per row.
+                        using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
+                        AlignedBuf buf(N_rhs);
                         T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
-                        for (size_t i = t; i < M; i += num_threads) {
+                        for (size_t i = i0; i < i1; ++i) {
                             if constexpr (L == Layout::RowMajor) {
-                                T* LINALG_RESTRICT rp = B_ptr + i*ldb;
-                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                                T* LINALG_RESTRICT rp = B_ptr + i * ldb;
+                                if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]); };
                                 trsm_col_solve(uplo, trans_r, diag, A, rp, N_rhs);
-                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]);
+                                if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]); };
                             } else {
-                                for (size_t j = 0; j < N_rhs; ++j) buf[j] = B_ptr[j*ldb+i];
-                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
-                                trsm_col_solve(uplo, trans_r, diag, A, buf.data(), N_rhs);
-                                if (conj_sides) LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) buf[j] = conj(buf[j]);
-                                for (size_t j = 0; j < N_rhs; ++j) B_ptr[j*ldb+i] = buf[j];
+                                // Gather row i (stride ldb) into contiguous buffer
+                                LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) bp[j] = B_ptr[j*ldb + i];
+                                if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) bp[j] = conj(bp[j]); };
+                                trsm_col_solve(uplo, trans_r, diag, A, bp, N_rhs);
+                                if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) bp[j] = conj(bp[j]); };
+                                LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) B_ptr[j*ldb + i] = bp[j];
                             };
                         };
                     }));
