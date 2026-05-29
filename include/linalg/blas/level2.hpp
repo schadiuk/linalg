@@ -318,8 +318,8 @@ namespace linalg {
                     for (size_t j = 0; j < i; ++j)
                         sum -= static_cast<T>(A(i, j)) * x[j];
                     x[i] = unit ? sum : sum / static_cast<T>(A(i, i));
-                }
-            }
+                };
+            };
         } else {
             if (upper) {
                 // Forward pass over columns of A^T (= rows of A scanned upward)
@@ -327,8 +327,8 @@ namespace linalg {
                     if (!unit)
                         x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
                     const T xj = x[j];
-                    for (size_t i = 0; i < j; ++i) {
-                        T aij = do_conj ? conj(static_cast<T>(A(i, j))) : static_cast<T>(A(i, j));
+                    for (size_t i = j + 1; i < N; ++i) {
+                        T aij = do_conj ? conj(static_cast<T>(A(j, i))) : static_cast<T>(A(j, i));
                         x[i] -= aij * xj;
                     };
                 };
@@ -338,8 +338,8 @@ namespace linalg {
                     if (!unit)
                         x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
                     const T xj = x[j];
-                    for (size_t i = j + 1; i < N; ++i) {
-                        T aij = do_conj ? conj(static_cast<T>(A(i, j))) : static_cast<T>(A(i, j));
+                    for (size_t i = 0; i < j; ++i) {
+                        T aij = do_conj ? conj(static_cast<T>(A(j, i))) : static_cast<T>(A(j, i));
                         x[i] -= aij * xj;
                     };
                 };
@@ -413,7 +413,7 @@ namespace linalg {
                     for (size_t j = 0; j < N; ++j) {
                         const T xj = xp[j];
                         tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
-                        for (size_t k = 0; k < j; ++k) tp[k] += Aval(k, j) * xj;
+                        for (size_t k = j + 1; k < N; ++k) tp[k] += Aval(j, k) * xj;
                     };
                     return;
                 };
@@ -427,7 +427,7 @@ namespace linalg {
                         for (size_t j = t; j < N; j += num_threads) {
                             const T xj = xp[j];
                             loc[j] += (Unit ? T(1) : Aval(j, j)) * xj;
-                            for (size_t k = 0; k < j; ++k) loc[k] += Aval(k, j) * xj;
+                            for (size_t k = j + 1; k < N; ++k) loc[k] += Aval(j, k) * xj;
                         };
                     }));
                 };
@@ -458,7 +458,7 @@ namespace linalg {
                     for (size_t j = 0; j < N; ++j) {
                         const T xj = xp[j];
                         tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
-                        for (size_t k = j + 1; k < N; ++k) tp[k] += Aval(k, j) * xj;
+                        for (size_t k = 0; k < j; ++k) tp[k] += Aval(j, k) * xj;
                     };
                     return;
                 };
@@ -472,7 +472,7 @@ namespace linalg {
                         for (size_t j = t; j < N; j += num_threads) {
                             const T xj = xp[j];
                             loc[j] += (Unit ? T(1) : Aval(j, j)) * xj;
-                            for (size_t k = j + 1; k < N; ++k) loc[k] += Aval(k, j) * xj;
+                            for (size_t k = 0; k < j; ++k) loc[k] += Aval(j, k) * xj;
                         };
                     }));
                 };
