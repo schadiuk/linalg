@@ -3,30 +3,41 @@
 #include <linalg/storage/vector.hpp>
 
 namespace linalg {
+    /// @brief View class.
+    /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+    /// @tparam Mutable Mutability indicator.
     template<typename T, bool Mutable = false>
     class VectorView : public VecExpr<VectorView<T, Mutable>> {
         using Ptr = std::conditional_t<Mutable, T*, const T*>;
     public:
-        // From const Vector: always produces a read-only view
+        /// @brief Read-only constructor from a const Vector.
+		/// @param vet The vector.
         explicit VectorView(const Vector<T>& vec) requires (!Mutable) : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
-        // From mutable Vector
+        /// @brief Constructor from a non-const Vector.
+		/// @param vet The vector.
         explicit VectorView(Vector<T>& vec) requires Mutable : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
-        // Raw-pointer constructor
+        /// @brief Raw-pointer constructor.
+        /// @param data Pointer to element (0,0) of this view's logical extent.
+        /// @param size Physical size.
+        /// @param stride Stride of the parent allocation.
         VectorView(Ptr data, size_t size, size_t stride = 1) : data_(data), size_(size), stride_(stride) {};
     
-        // Implicit narrowing: mutable -> const
+        /// @brief Conversion operator with implicit narrowing: mutable -> const.
         operator VectorView<T, false>() const requires Mutable {
             return VectorView<T, false>(static_cast<const T*>(data_), size_, stride_);
         };
 
-        // Accesors
         size_t size() const { return size_; };
         size_t stride() const { return stride_;};
         Ptr data() const { return data_; };
 
-        // Read access: always available, avoids copying data
+        /// @brief Checked element indexation, read-only.
+		/// @param i Index.
+		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
+		/// @note Both operator() and operator[] exist, and are equivalent.
+        /// @note Methods, analoguous to `at()`, were removed.
         const T& operator()(size_t i) const {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];
@@ -37,7 +48,11 @@ namespace linalg {
             return data_[i * stride_];
         };
     
-        // Write access: only synthesised for mutable views
+        /// @brief Checked element indexation, allows writing to mutable views.
+		/// @param i Index.
+		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
+		/// @note Both operator() and operator[] exist, and are equivalent.
+        /// @note Methods, analoguous to `at()`, were removed.
         T& operator()(size_t i) requires Mutable {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];
@@ -48,7 +63,10 @@ namespace linalg {
             return data_[i * stride_];
         };
 
-        // Assignment from expression: only mutable views
+        /// @brief Assignment operator from an expression for mutable views.
+        /// @tparam E CRTP-required parameter clause of `VecExpr`.
+        /// @param expr The expression.
+        /// @return `*this` pointer.
         template<typename E>
         VectorView& operator=(const VecExpr<E>& expr) requires Mutable {
             const auto& e = expr.self();
@@ -64,7 +82,10 @@ namespace linalg {
             return *this;
         };
 
-        // Aliasing detection
+		/// @brief Aliasing detection utility.
+		/// @param p Wildcard pointer.
+		/// @param bytes 
+		/// @return Boolean indicator.
 	    bool depends_on(const void* p, size_t bytes) const {
             if (size_ == 0) return false;
             const void* start = static_cast<const void*>(data_);
@@ -74,7 +95,7 @@ namespace linalg {
         };
 
     private:
-        // Memory structure: a pointer to the first element, the number of elements, and the stride (in elements)
+        /// @brief Memory structure helper.
 	    size_t memory_span() const { return (size_ == 0) ? 0 : ((size_ - 1) * stride_ + 1) * sizeof(T); };
 
         // Data pointer and dimensions
@@ -84,9 +105,15 @@ namespace linalg {
         template<typename U, bool M> friend struct VecViewRef;
     };
  
+    /// @brief Mutable view of a vector.
+    /// @param vec Non-constant vector.
+    /// @return The view.
     template<typename T>
     VectorView<T, true>  view(Vector<T>& vec) { return VectorView<T, true >(vec); };
-    
+
+    /// @brief Immutable view of a vector.
+    /// @param vec Constant vector.
+    /// @return The view.
     template<typename T>
     VectorView<T, false> view(const Vector<T>& vec) { return VectorView<T, false>(vec); };
 };

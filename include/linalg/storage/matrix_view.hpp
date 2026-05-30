@@ -6,37 +6,44 @@ namespace linalg {
 	template<typename T, Layout L> requires Scalar<T>
 	class Matrix;
 
-    // View class supporting zero-overhead transposition and complex conjugation
+	/// @brief View class supporting zero-overhead transposition and complex conjugation.
+	/// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+	/// @tparam L Layout.
+	/// @tparam Trans Transposition flag.
+	/// @tparam Conj Conjugation flag.
+	/// @tparam Mutable Mutability flag.
 	template<typename T, Layout L, bool Trans = false, bool Conj = false, bool Mutable = false>
 	class MatrixView : public MatExpr<MatrixView<T, L, Trans, Conj, Mutable>> {
 		using Ptr = std::conditional_t<Mutable, T*, const T*>;
 	public:
-        // Constructor from const Matrix (always read-only)
+        /// @brief Read-only constructor from a const Matrix.
+		/// @param mat Constant Matrix.
     	explicit MatrixView(const Matrix<T, L>& mat) requires (!Mutable) : data_(mat.data()), rows_(mat.rows()), cols_(mat.cols()),
         		stride_(L == Layout::RowMajor ? mat.cols() : mat.rows()) {};
  
-    	// Constructor from mutable Matrix
+    	/// @brief Constructor from non-const (mutable) Matrix.
+		/// @param mat The Matrix object.
     	explicit MatrixView(Matrix<T, L>& mat) requires Mutable : data_(mat.data()), rows_(mat.rows()), cols_(mat.cols()),
           		stride_(L == Layout::RowMajor ? mat.cols() : mat.rows()) {};
 
-		// Raw-pointer constructor with:
-		// data: pointer to element (0,0) of this view's logical extent
-		// rows: physical row count (before applying Trans)
-		// cols: physical column count (before applying Trans)
-		// stride: leading dimension of the parent allocation
+    	/// @brief Raw-pointer constructor.
+    	/// @param data Pointer to element (0,0) of this view's logical extent.
+    	/// @param rows Physical row count (before applying Trans).
+    	/// @param cols Physical column count (before applying Trans).
+    	/// @param stride Leading dimension of the parent allocation.
     	MatrixView(Ptr data, size_t rows, size_t cols, size_t stride) : data_(data), rows_(rows), cols_(cols), stride_(stride) {};
 		
-		// Implicit narrowing: mutable -> const
+		/// @brief Conversion operator with implicit narrowing: mutable -> const.
 		operator MatrixView<T, L, Trans, Conj, false>() const requires Mutable {
 			return MatrixView<T, L, Trans, Conj, false>(static_cast<const T*>(data_), rows_, cols_, stride_);
 		};
 
-        // Accessors
 		size_t rows() const { return Trans ? cols_ : rows_; };
 		size_t cols() const { return Trans ? rows_ : cols_; };
 		size_t stride() const { return stride_; };
 		Ptr data() const { return data_; };
 
+        /// @brief Indexation helper.
         size_t index(size_t i, size_t j) const {
 			const size_t ii = Trans ? j : i;
 			const size_t jj = Trans ? i : j;
@@ -44,27 +51,45 @@ namespace linalg {
 			return jj * stride_ + ii;
 		};
 
-
+		/// @brief Safe element access, as operator() does not check if index is valid.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)`.
+        /// @throws linalg::detail::BoundsError.
 		T at(size_t i, size_t j) const {
 			BOUNDS_CHECK(i < rows() && j < cols());
 			return Conj ? conj(data_[index(i, j)]) : data_[index(i, j)];
 		};
 
+		/// @brief Unchecked element indexation.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)`. 
 		const T& operator()(size_t i, size_t j) const requires (!Conj) {
 			return data_[index(i, j)];
 		};
 	
-		// Read access, conjugate: returns T by value
+		/// @brief Unchecked element read-only element access.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Conjugate of the element with given indices `conj(A(i, j))`. 
 		T operator()(size_t i, size_t j) const requires Conj {
 			return conj(data_[index(i, j)]);
 		};
 	
-		// Write access: only for mutable, non-conjugate views.
+		/// @brief Write access.
+        /// @param i Row index.
+        /// @param j Column index. 
+		/// @return Element with given indices `A(i, j)`.
+		/// @note  Works only for mutable, non-conjugate views.
 		T& operator()(size_t i, size_t j) requires (Mutable && !Conj) {
 			return data_[index(i, j)];
 		};
 
-		// Assignment from any matrix expression for mutable, non-conjugate views.
+        /// @brief  Assignment from a given matrix expression.
+        /// @tparam E CRTP-required parameter clause of `MatExpr`.
+        /// @param expr The expression. 
+        /// @return `*this` pointer.
         template<typename E>
         MatrixView& operator=(const MatExpr<E>& expr) requires (Mutable && !Conj) {
             const auto& e = expr.self();
@@ -89,13 +114,16 @@ namespace linalg {
             return *this;
         };
 
-		// Homogeneous copy between views of any Trans/Conj combination
+		/// @brief  Homogeneous copy between views of any Trans/Conj combination. 
 		template<bool T2, bool C2, bool M2>
         MatrixView& operator=(const MatrixView<T, L, T2, C2, M2>& other) requires (Mutable && !Conj) {
             return *this = static_cast<const MatExpr<MatrixView<T, L, T2, C2, M2>>&>(other);
         };
 
-        // Aliasing detection
+		/// @brief Aliasing detection utility.
+		/// @param p Wildcard pointer.
+		/// @param bytes 
+		/// @return Boolean indicator. 
 		bool depends_on(const void* p, size_t bytes) const {
 			if (rows_ == 0 || cols_ == 0) return false;
 			const void* start = static_cast<const void*>(data_);
@@ -110,7 +138,7 @@ namespace linalg {
 
 
 	private:
-		 // Memory structure helper
+		/// @brief  Memory structure helper
 		size_t memory_span() const {
 			if (rows_ == 0 || cols_ == 0) return 0;
 			if constexpr (L == Layout::RowMajor) return ((rows_ - 1) * stride_ + cols_) * sizeof(T);
@@ -122,24 +150,38 @@ namespace linalg {
 		size_t rows_, cols_, stride_;
 	};
 
-    // Helper functions to create views
+	/// @brief Helper function to create mutable views.
+	/// @param mat Non-const matrix.
+	/// @return The view.
 	template<typename T, Layout L>
-	MatrixView<T, L, false, false, true>  view(Matrix<T, L>& mat) {
+	MatrixView<T, L, false, false, true> view(Matrix<T, L>& mat) {
 		return MatrixView<T, L, false, false, true>(mat);
 	};
 	
+	/// @brief Helper function to create read-only views.
+	/// @param mat Const matrix.
+	/// @return The view.
 	template<typename T, Layout L>
 	MatrixView<T, L, false, false, false> view(const Matrix<T, L>& mat) {
 		return MatrixView<T, L, false, false, false>(mat);
 	};
 	
+    /// @brief Mutable transpose of a matrix.
+    /// @param mat Non-const matrix.
+    /// @return The view.
     template<typename T, Layout L>
     auto transpose(Matrix<T, L>& mat) { return MatrixView<T, L, true, false, true>(mat); };
 
+    /// @brief Read-only transpose of a matrix.
+    /// @param mat Const matrix.
+    /// @return The view.
     template<typename T, Layout L>
     auto transpose(const Matrix<T, L>& mat) { return MatrixView<T, L, true, false, false>(mat); };
 
-	// Semantically read-only: one cannot deduce the intent when writing to the view
+	/// @brief Hermitian (conjugate transpose) view of a matrix. 
+	/// @param mat The matrix.
+	/// @return The view.
+	/// @note Semantically read-only: one cannot deduce the intent when writing to the view.
 	template<typename T, Layout L>
     auto hermitian(const Matrix<T, L>& mat) { return MatrixView<T, L, true, true, false>(mat); };
 };
