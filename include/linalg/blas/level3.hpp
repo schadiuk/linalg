@@ -507,19 +507,28 @@ namespace linalg {
         LINALG_INLINE void scale_triangle(char uplo, T beta, T* LINALG_RESTRICT cp, size_t ldc, size_t N) {
             if (beta == T(1)) return;
             const bool upper = (uplo == 'U' || uplo == 'u');
-            for (size_t i = 0; i < N; ++i) {
-                const size_t j0 = upper ? i : 0;
-                const size_t j1 = upper ? N : i + 1;
-                if constexpr (L == Layout::RowMajor) {
-                    T* LINALG_RESTRICT row = cp + i * ldc;
-                    if (beta == T(0)) std::fill(row + j0, row + j1, T(0));
-                    else LINALG_VECTORIZE for (size_t j = j0; j < j1; ++j) row[j] *= beta;
-                } else {
-                    for (size_t j = j0; j < j1; ++j) {
-                        T& elem = cp[j*ldc+i];
-                        elem = (beta == T(0)) ? T(0) : elem * beta;
+            const size_t threshold = std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (N / 2 + 1));
+            if constexpr (L == Layout::RowMajor) {
+                parallel_for(N, threshold, [cp, ldc, N, upper, beta](size_t rs, size_t re) {
+                    for (size_t i = rs; i < re; ++i) {
+                        const size_t j0 = upper ? i : 0;
+                        const size_t j1 = upper ? N : i + 1;
+                        T* LINALG_RESTRICT row = cp + i * ldc;
+                        if (beta == T(0)) std::fill(row + j0, row + j1, T(0));
+                        else { LINALG_VECTORIZE for (size_t j = j0; j < j1; ++j) row[j] *= beta; };
                     };
-                };
+                });
+            } else {
+                // ColMajor: iterate over columns; column j covers rows [j0, j1)
+                parallel_for(N, threshold, [cp, ldc, N, upper, beta](size_t cs, size_t ce) {
+                    for (size_t j = cs; j < ce; ++j) {
+                        const size_t i0 = upper ? 0 : j;
+                        const size_t i1 = upper ? j + 1 : N;
+                        T* LINALG_RESTRICT col = cp + j * ldc;
+                        if (beta == T(0)) std::fill(col + i0, col + i1, T(0));
+                        else { LINALG_VECTORIZE for (size_t i = i0; i < i1; ++i) col[i] *= beta; };
+                    };
+                });
             };
         };
 
@@ -527,28 +536,93 @@ namespace linalg {
             template<typename T, Layout L>
             LINALG_INLINE void syrk_core(char uplo, T alpha, const T* ap, size_t lda, size_t N, size_t K, bool notrans, bool conjugate, T* cp, size_t ldc) {
                 const bool upper = (uplo == 'U' || uplo == 'u');
+                const size_t bs = L1_BLOCK * 2;
                 // Element of A at logical outer-product index (vec, k).
                 // notrans -> row  vec of A: A(vec, k)
                 // trans -> col  vec of A: A(k, vec)
-                auto Aelem = [ap, lda, notrans](size_t vec, size_t k) -> T {
-                    if constexpr (L == Layout::RowMajor)
-                        return notrans ? ap[vec*lda+k] : ap[k*lda+vec];
-                    else
-                        return notrans ? ap[k*lda+vec] : ap[vec*lda+k];
-                };
-                parallel_for(N, PARALLEL_THRESHOLD_COMPUTE,
-                    [=, &upper](size_t rs, size_t re) {
+                using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
+                AlignedBuf A_buf(N * K);
+                T* LINALG_RESTRICT Ab = detail::assume_aligned<64>(A_buf.data());
+                // Fill Ab[i*K + k] = logical_A(i, k)
+                // RowMajor + notrans: physical A[i,k] = ap[i*lda + k]
+                // RowMajor + trans: physical A[k,i] = ap[k*lda + i]
+                // ColMajor + notrans: physical A[i,k] = ap[k*lda + i]
+                // ColMajor + trans: physical A[k,i] = ap[i*lda + k]
+                parallel_for(N, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (K + 1)),
+                    [=](size_t rs, size_t re) {
                         for (size_t i = rs; i < re; ++i) {
-                            const size_t j0 = upper ? i : 0, j1 = upper ? N : i+1;
-                            for (size_t j = j0; j < j1; ++j) {
-                                T s = T(0);
-                                for (size_t k = 0; k < K; ++k)
-                                    s += Aelem(i, k) * (conjugate ? conj(Aelem(j, k)) : Aelem(j, k));
-                                if constexpr (L == Layout::RowMajor) cp[i*ldc+j] += alpha * s;
-                                else cp[j*ldc+i] += alpha * s;
+                            T* LINALG_RESTRICT dst = Ab + i * K;
+                            if constexpr (L == Layout::RowMajor) {
+                                if (notrans) {
+                                    const T* src = ap + i * lda;
+                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                } else {
+                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+                                };
+                            } else {
+                                if (notrans) {
+                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+                                } else {
+                                    const T* src = ap + i * lda;
+                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                };
                             };
                         };
                     });
+                // Blocked outer loop over i-tiles; parallelised at tile level.
+                const size_t n_itiles = (N + bs - 1) / bs;
+                parallel_for(n_itiles, 1, [=, &A_buf](size_t tis, size_t tie) {
+                    for (size_t ti = tis; ti < tie; ++ti) {
+                        const size_t i0 = ti * bs, i1 = std::min(i0 + bs, N);
+                        // j-tile loop: only the triangle half
+                        for (size_t tj = upper ? ti : 0; tj < (upper ? n_itiles : ti + 1); ++tj) {
+                            const size_t j0 = tj * bs, j1 = std::min(j0 + bs, N);
+                            for (size_t i = i0; i < i1; ++i) {
+                                const T* LINALG_RESTRICT ai = Ab + i * K;
+                                // j starts at i (diagonal tile) or j0 (off-diagonal tile)
+                                const size_t jstart = (upper && ti == tj) ? i : j0;
+                                const size_t jend = (!upper && ti == tj) ? i + 1 : j1;
+                                for (size_t j = jstart; j < jend; ++j) {
+                                    const T* LINALG_RESTRICT aj = Ab + j * K;
+                                    // 8-wide unrolled dot product with optional conjugation
+                                    T s0{}, s1{}, s2{}, s3{}, s4{}, s5{}, s6{}, s7{};
+                                    const size_t K8 = (K / 8) * 8;
+                                    if (conjugate) {
+                                        LINALG_VECTORIZE
+                                        for (size_t k = 0; k < K8; k += 8) {
+                                            s0 += ai[k ] * conj(aj[k]);
+                                            s1 += ai[k+1] * conj(aj[k+1]);
+                                            s2 += ai[k+2] * conj(aj[k+2]);
+                                            s3 += ai[k+3] * conj(aj[k+3]);
+                                            s4 += ai[k+4] * conj(aj[k+4]);
+                                            s5 += ai[k+5] * conj(aj[k+5]);
+                                            s6 += ai[k+6] * conj(aj[k+6]);
+                                            s7 += ai[k+7] * conj(aj[k+7]);
+                                        };
+                                        for (size_t k = K8; k < K; ++k) s0 += ai[k] * conj(aj[k]);
+                                    } else {
+                                        LINALG_VECTORIZE
+                                        for (size_t k = 0; k < K8; k += 8) {
+                                            s0 += ai[k] * aj[k];
+                                            s1 += ai[k+1] * aj[k+1];
+                                            s2 += ai[k+2] * aj[k+2];
+                                            s3 += ai[k+3] * aj[k+3];
+                                            s4 += ai[k+4] * aj[k+4];
+                                            s5 += ai[k+5] * aj[k+5];
+                                            s6 += ai[k+6] * aj[k+6];
+                                            s7 += ai[k+7] * aj[k+7];
+                                        };
+                                        for (size_t k = K8; k < K; ++k) s0 += ai[k] * aj[k];
+                                    };
+                                    const T s = ((s0+s1)+(s2+s3)) + ((s4+s5)+(s6+s7));
+ 
+                                    if constexpr (L == Layout::RowMajor) cp[i*ldc + j] += alpha * s;
+                                    else cp[j*ldc + i] += alpha * s;
+                                };
+                            };
+                        };
+                    };
+                });
             };
         };
 
