@@ -26,6 +26,8 @@ namespace linalg {
             const size_t m = A.rows();
             const size_t n = A.cols();
             const size_t mn = std::min(m, n);
+            T* const ap = detail::assume_aligned<64>(A.data());
+            const size_t lda = A.stride();
             Vector<size_t> piv(mn);
             for (size_t i = 0; i < mn; ++i) piv[i] = i;
             // Parallelised submatrix copy helpers
@@ -74,7 +76,7 @@ namespace linalg {
                 for (size_t j = k; j < right_start; ++j) {
                     // Pivot search: find max abs(A(i,j)) for i in [j, m)
                     size_t pr = j;
-                    auto   mx = std::abs(static_cast<T>(A(j, j)));
+                    auto  mx = std::abs(static_cast<T>(A(j, j)));
                     for (size_t i = j + 1; i < m; ++i) {
                         const auto v = std::abs(static_cast<T>(A(i, j)));
                         if (v > mx) { mx = v; pr = i; };
@@ -82,23 +84,54 @@ namespace linalg {
                     piv[j] = pr;
                     // Full-row swap: applied to columns 0:n
                     if (pr != j)
-                        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
-                            [&A, j, pr](size_t s, size_t e) {
-                                for (size_t jj = s; jj < e; ++jj)
-                                    std::swap(A(j, jj), A(pr, jj));
-                            });
+                        if constexpr (L == Layout::RowMajor) {
+                            T* LINALG_RESTRICT rj = ap + j  * lda;
+                            T* LINALG_RESTRICT rpr = ap + pr * lda;
+                            parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
+                                [rj, rpr](size_t s, size_t e) {
+                                    LINALG_VECTORIZE
+                                    for (size_t jj = s; jj < e; ++jj)
+                                        std::swap(rj[jj], rpr[jj]);
+                                });
+                        } else {
+                            parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
+                                [ap, lda, j, pr](size_t s, size_t e) {
+                                    for (size_t jj = s; jj < e; ++jj)
+                                        std::swap(ap[jj*lda + j], ap[jj*lda + pr]);
+                                });
+                        };
                     // Scale sub-diagonal entries
                     const T diag = static_cast<T>(A(j, j));
                     if (diag != T(0)) {
                         const T inv = T(1) / diag;
-                        for (size_t i = j + 1; i < m; ++i) A(i, j) *= inv;
+                        if constexpr (L == Layout::RowMajor) {
+                            for (size_t i = j + 1; i < m; ++i)
+                                ap[i*lda + j] *= inv;
+                        } else {
+                            T* LINALG_RESTRICT col_j = ap + j * lda;
+                            LINALG_VECTORIZE
+                            for (size_t i = j + 1; i < m; ++i) col_j[i] *= inv;
+                        };
                     };
                     // Rank-1 update of the remaining panel columns within block
-                    for (size_t i = j + 1; i < m; ++i) {
-                        const T lij = static_cast<T>(A(i, j));
-                        if (lij == T(0)) continue;   // skip zero multiplier rows
-                        for (size_t jj = j + 1; jj < right_start; ++jj)
-                            A(i, jj) -= lij * static_cast<T>(A(j, jj));
+                    if constexpr (L == Layout::RowMajor) {
+                        const T* LINALG_RESTRICT pivot_row = ap + j * lda;
+                        for (size_t i = j + 1; i < m; ++i) {
+                            const T lij = ap[i*lda + j];
+                            if (lij == T(0)) continue;
+                            T* LINALG_RESTRICT tgt_row = ap + i * lda;
+                            LINALG_VECTORIZE
+                            for (size_t jj = j + 1; jj < right_start; ++jj) tgt_row[jj] -= lij * pivot_row[jj];
+                        };
+                    } else {
+                        const T* LINALG_RESTRICT l_col = ap + j * lda; // A(*, j)
+                        for (size_t jj = j + 1; jj < right_start; ++jj) {
+                            const T pval = ap[jj*lda + j]; // A(j, jj)
+                            if (pval == T(0)) continue;
+                            T* LINALG_RESTRICT tgt_col = ap + jj * lda;
+                            LINALG_VECTORIZE
+                            for (size_t i = j + 1; i < m; ++i) tgt_col[i] -= l_col[i] * pval;
+                        };
                     };
                 };
  
@@ -130,7 +163,7 @@ namespace linalg {
  
         // Reconstructs the permutation matrix
         template<typename T, Layout L>
-        Matrix<T, L> piv_to_P(const Vector<size_t>& piv, size_t m) {
+        LINALG_INLINE Matrix<T, L> piv_to_P(const Vector<size_t>& piv, size_t m) {
             Matrix<T, L> P = Matrix<T, L>::identity(m);
             for (size_t i = 0; i < piv.size(); ++i)
                 if (piv[i] != i)
@@ -140,7 +173,7 @@ namespace linalg {
         };
  
         template<typename T, Layout L>
-        Matrix<T, L> unpack_L(const Matrix<T, L>& pk) {
+        LINALG_INLINE Matrix<T, L> unpack_L(const Matrix<T, L>& pk) {
             const size_t m = pk.rows();
             const size_t mn = std::min(m, pk.cols());
             Matrix<T, L> Lo(m, mn, T(0));
@@ -167,7 +200,7 @@ namespace linalg {
         };
  
         template<typename T, Layout L>
-        Matrix<T, L> unpack_U(const Matrix<T, L>& pk) {
+        LINALG_INLINE Matrix<T, L> unpack_U(const Matrix<T, L>& pk) {
             const size_t n = pk.cols();
             const size_t mn = std::min(pk.rows(), n);
             Matrix<T, L> Up(mn, n, T(0));
@@ -240,6 +273,7 @@ namespace linalg {
                 const size_t pi = piv[i];
                 parallel_for(nrhs, PARALLEL_THRESHOLD_SIMPLE,
                     [&B, i, pi](size_t s, size_t e) {
+                        LINALG_VECTORIZE
                         for (size_t j = s; j < e; ++j)
                             std::swap(B(i, j), B(pi, j));
                     });

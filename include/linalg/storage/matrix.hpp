@@ -3,6 +3,7 @@
 #include <linalg/core/common.hpp>
 #include <linalg/core/error.hpp>
 #include <linalg/core/parallel.hpp>
+#include <linalg/core/hints.hpp>
 
 namespace linalg {
     // Forward declaration of expression template class
@@ -190,7 +191,7 @@ namespace linalg {
 
             if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
                 if (depends) {
-                    std::vector<T> temp(total);
+                    std::vector<T, AlignedAllocator<T>> temp(total);
                     size_t idx = 0;
                     for (size_t i = 0; i < this->rows_; ++i) {
                         for (size_t j = 0; j < this->cols_; ++j) {
@@ -293,6 +294,8 @@ namespace linalg {
             return data_[idx];
         };
 
+        // Unchecked element indexation
+        LINALG_INLINE
         /// @brief Unchecked element indexation.
         /// @param i Row index.
         /// @param j Column index.
@@ -302,6 +305,7 @@ namespace linalg {
             return data_[idx];
         };
 
+        LINALG_INLINE
         const T& operator()(size_t i, size_t j) const {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
@@ -346,7 +350,7 @@ namespace linalg {
 
     private:
         // Data storage and dimensions
-        std::vector<T> data_;
+        std::vector<T, AlignedAllocator<T>> data_;
         size_t rows_, cols_, stride_;
 
         template<typename U, Layout LL, bool Trans, bool Conj, bool Mutable> friend class MatrixView;

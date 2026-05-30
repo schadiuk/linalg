@@ -177,4 +177,29 @@ namespace linalg {
         for (const auto& p : partials) result += p.value;
         return result;
     };
+
+    template<typename T, typename F>
+    T parallel_reduce_chunks(size_t total, size_t threshold, F&& func) {
+        if (total == 0) return T{};
+        if (total < threshold) return func(0, total);
+        auto& pool = ThreadPool::instance();
+        size_t num_threads = std::min(pool.thread_count(),
+            (total + threshold - 1) / threshold);
+        std::vector<Padded<T>> partials(num_threads);
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads);
+        size_t chunk = total / num_threads, rem = total % num_threads, offset = 0;
+        for (size_t t = 0; t < num_threads; ++t) {
+            const size_t cnt = chunk + (t < rem ? 1 : 0);
+            const size_t s   = offset, e = s + cnt;
+            futures.push_back(pool.enqueue([&func, &partials, s, e, t]() {
+                partials[t].value = func(s, e);
+            }));
+            offset += cnt;
+        };
+        for (auto& f : futures) f.get();
+        T result{};
+        for (const auto& p : partials) result += p.value;
+        return result;
+    };
 };

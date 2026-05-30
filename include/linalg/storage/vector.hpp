@@ -3,6 +3,7 @@
 #include <linalg/core/common.hpp>
 #include <linalg/core/error.hpp>
 #include <linalg/core/parallel.hpp>
+#include <linalg/core/hints.hpp>
 
 namespace linalg {
 	// Forward declaration of expression template class
@@ -79,7 +80,7 @@ namespace linalg {
 
 			if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
 				if (depends) {
-					std::vector<T> temp(total);
+					std::vector<T, AlignedAllocator<T>> temp(total);
 					for (size_t i = 0; i < total; ++i) {
 						temp[i] = e(i);
 					};
@@ -132,6 +133,8 @@ namespace linalg {
 			return data_[i];
 		};
 
+        // Unchecked element indexation. NOTE: both operator [] and () are provided
+		LINALG_INLINE
 		/// @brief Unchecked element indexation.
 		/// @param i Index.
 		/// @return Element given by `Vec[i]` if such exists, undefined otherwise.
@@ -141,11 +144,13 @@ namespace linalg {
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		const T& operator[](size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		/// @brief Unchecked element indexation.
 		/// @param i Index.
 		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
@@ -155,6 +160,7 @@ namespace linalg {
 			return data_[i];
 		};
 
+		LINALG_INLINE
 		const T& operator()(size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
@@ -191,7 +197,7 @@ namespace linalg {
 
 	private:
 	    // Data storage and dimension
-		std::vector<T> data_;
+		std::vector<T, AlignedAllocator<T>> data_;
 		size_t size_;
 
         template<typename U, bool M> friend class VectorView;

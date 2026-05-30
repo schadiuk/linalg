@@ -19,6 +19,7 @@ namespace linalg {
 	    size_t cols() const { return mat.cols(); };
         size_t stride() const { return mat.stride(); };
 
+        LINALG_INLINE
 	    /// @brief Element indexation.
         /// @param i Row index.
         /// @param j Column index.
@@ -58,6 +59,12 @@ namespace linalg {
         size_t cols() const { return view.cols(); };
         size_t stride() const { return view.stride(); };
 
+        // Read path: always available
+        LINALG_INLINE
+        T operator()(size_t i, size_t j) const { return view(i, j); };
+ 
+        // Write path: only synthesised for mutable wrappers
+        LINALG_INLINE
 		/// @brief Unchecked, read-only, element indexation.
         /// @param i Row index.
         /// @param j Column index.
@@ -91,6 +98,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -117,6 +125,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -144,6 +153,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -170,6 +180,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -196,6 +207,7 @@ namespace linalg {
         size_t rows() const { return a.rows(); };
         size_t cols() const { return b.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -252,6 +264,7 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -296,6 +309,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -332,6 +346,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
@@ -356,6 +371,7 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             auto val = expr(i, j);
             using T = std::remove_cv_t<std::remove_reference_t<decltype(val)>>;
@@ -380,11 +396,13 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
         
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             auto val = expr(i, j);
             using T = std::remove_cv_t<std::remove_reference_t<decltype(val)>>;
             return (static_cast<int>(j) - static_cast<int>(i) <= k) ? val : T(0);
         };
+        
 
 		/// @brief Aliasing detection utility.
 		/// @param p Wildcard pointer.
