@@ -59,16 +59,11 @@ namespace linalg {
         size_t cols() const { return view.cols(); };
         size_t stride() const { return view.stride(); };
 
-        // Read path: always available
-        LINALG_INLINE
-        T operator()(size_t i, size_t j) const { return view(i, j); };
- 
-        // Write path: only synthesised for mutable wrappers
-        LINALG_INLINE
 		/// @brief Unchecked, read-only, element indexation.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Element with given indices `A(i, j)`.
+        LINALG_INLINE
         T operator()(size_t i, size_t j) const { return view(i, j); };
  
 		/// @brief Write access.
@@ -98,11 +93,11 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Sum at the given indices: `e1(i, j) + e2(i, j)`.
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) + e2(i, j); };
 
         /// @brief Aliasing detection utility.
@@ -125,11 +120,11 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Difference at the given indices: `e1(i, j) - e2(i, j)`.
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) - e2(i, j); };
 
 		/// @brief Aliasing detection utility.
@@ -153,11 +148,11 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Product at the given indices: `e1(i, j) * e2(i, j)`.
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) * e2(i, j); };
 
 		/// @brief Aliasing detection utility.
@@ -180,11 +175,11 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Product at the given indices: `expr(i, j) * scalar`
+        LINALG_INLINE
         T operator()(size_t i, size_t j) const { return expr(i, j) * scalar; };
 
 		/// @brief Aliasing detection utility.
@@ -207,11 +202,11 @@ namespace linalg {
         size_t rows() const { return a.rows(); };
         size_t cols() const { return b.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Product result at the given indices. 
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const {
             using Type = decltype(a(i, 0)* b(0, j));
             Type sum = Type(0);
@@ -264,11 +259,11 @@ namespace linalg {
         size_t rows() const { return e1.rows(); };
         size_t cols() const { return e1.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Quotient at the given indices: `e1(i, j) / e2(i, j)`.
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return e1(i, j) / e2(i, j); };
 
 		/// @brief Aliasing detection utility.
@@ -309,11 +304,11 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Product at the given indices: `scalar / expr(i, j)`
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return scalar / expr(i, j); };
 
 		/// @brief Aliasing detection utility.
@@ -346,11 +341,11 @@ namespace linalg {
         size_t rows() const { return expr.rows(); };
         size_t cols() const { return expr.cols(); };
 
-        LINALG_INLINE
         /// @brief Element indexation of the expression.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Result at the given indices: `func(expr(i, j))`.
+        LINALG_INLINE
         auto operator()(size_t i, size_t j) const { return func(expr(i, j)); };
 
 		/// @brief Aliasing detection utility.

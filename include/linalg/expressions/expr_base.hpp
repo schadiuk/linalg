@@ -11,17 +11,15 @@ namespace linalg {
 		/// @brief `*this` pointer accessor.
 		T& self() { return static_cast<T&>(*this); };
 		const T& self() const { return static_cast<const T&>(*this); };
-		
-		LINALG_INLINE size_t rows() const { return self().rows(); };
-		LINALG_INLINE size_t cols() const { return self().cols(); };
 
-		LINALG_INLINE
 		/// @brief Row count accessor.
 		/// @return Row count.
+		LINALG_INLINE
 		size_t rows() const { return self().rows(); };
 
 		/// @brief column count accessor.
 		/// @return Column count.
+		LINALG_INLINE
 		size_t cols() const { return self().cols(); };
 
 		/// @brief Element indexation.
@@ -45,11 +43,9 @@ namespace linalg {
 		T& self() { return static_cast<T&>(*this); };
 	    const T& self() const { return static_cast<const T&>(*this); };
 		
-	    LINALG_INLINE size_t size() const { return self().size(); };
-
-		LINALG_INLINE
 	    /// @brief Size accessor.
 	    /// @return Size (length) of the vector.
+		LINALG_INLINE
 	    size_t size() const { return self().size(); };
 
 	    /// @brief Element access.
