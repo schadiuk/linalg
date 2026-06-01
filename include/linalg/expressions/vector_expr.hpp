@@ -32,8 +32,8 @@ namespace linalg {
     /// @brief Structure responsible for vector view support.
     /// @tparam T Scalar type.
     /// @tparam Mutable Mutability flag.
-    template<typename T, bool Mutable = false> // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
-    struct VecViewRef : VecExpr<VecViewRef<T, Mutable>> {
+    template<typename T, bool Mutable = false> 
+    struct VecViewRef : VecExpr<VecViewRef<T, Mutable>> { // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
         /// @brief Storage of the view.
         VectorView<T, Mutable>& view;
 
@@ -298,7 +298,7 @@ namespace linalg {
         VgemExpr(const EV& v, const EM& m) : vec(v), mat(m) { BOUNDS_CHECK(vec.size() == m.rows()); };
 
         size_t size() const { return mat.cols(); };
-        
+
         /// @brief Element indexation of the expression.
         /// @param i Index.
         /// @return Product result at the given index. 

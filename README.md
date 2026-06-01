@@ -2,6 +2,107 @@
 An educational header-based C++ linear algebra library revolving around lazy expression templates and BLAS-like kernels.
 ---
 ## Overview
-`linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, hand-tuned GEMM and 
-a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows
-where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
+`linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, hand-tuned GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
+---
+## Features
+- **Header-only**: including a single header file is the only setup needed.
+- **Expression templates**: arithmetic expressions (eg. `alpha * A - beta * B * C`) are lazy and allocation-free until assigned.
+- **BLAS**: optimised, CPU-friendly kernels for `gemv`, `gemm`, `trsv`, `trsm` and many more operations.
+- **Parallelisation**: a singleton `ThreadPool` dispatches work across all hardware threads with thresholds preventing overhead on smaller problems.
+- **Aligned storage**: every allocation is 64-byte aligned by means of `AlignedAllocator`, enabling auto-vectorisation.
+- **Copy-free views**: `VectorView` and `MatrixView` provide zero-overhead windows, transpositions and conjugations.
+- **Complex support**: all operations are designed to support `float`, `double`, and their `std::complex` counterparts.
+---
+## Prerequisites
+| Requirement | Minimum |
+|-------------|---------|
+| C++ standard| C++20|
+| Compiler | GCC 12+, Clang 14+, MSVC 19.30+ |
+| Architecture | x86-64, ARM64, or any scalar target |
+No third-party assets needed, as the standard library is the only dependency. For installation, copy the `linalg/` directory and include the umbrella header:
+```cpp
+#include <linalg.hpp>
+```
+Compile with C++20 and enable optimisations for best performance.
+
+Recommended set of flags (safe and reproducible):
+```
+g++ -std=c++20 -march=native -O2 my_file.cpp
+```
+Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed):
+```
+g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize my_file.cpp
+```
+---
+## Core types
+- `Vector<T>` - a contiguous, 64-byte aligned, heap allocated vector type. Participates in expression templates via `VecExpr<Vector<T>>`.
+```cpp
+// Construction.
+Vector<double> v(10); // Unitialised, size 10.
+Vector<double> v(10, 1.0); // Size 10 vector,filled with ones.
+Vector<double> v = {3.0, 2.0, 1.0}; // Initialised via list.
+
+// Static factories.
+auto v = Vector<double>::random(100);
+auto v = Vector<double>::zeros(100);
+auto v = Vector<double>::ones(100);
+
+// Accessors.
+v[i]; v(i); // Unchecked
+v.at(i);    // Checked indexation.
+v.size();
+v.data(); // Raw T* data pointer.
+```
+
+- `Matrix<T, L>` - contiguous aligned matrix. `L` denotes layout, defined by `linalg::Layout`: either `RowMajor` (default) or `ColMajor`. Participates in expression templates by means of `MatExpr<Matrix<T, L>>` and other dedicated classes. The view class - `MatrixView<T, L, Trans, Conj, Mutable>` - allows building non-owning matrix windows with compile-time transposition and conjugation flags.
+`hermitian()` and `transpose()` are zero-copy: the view's operator() applies the logical transformation on every read.
+```cpp
+// Construction.
+Matrix<double> A(3, 4); // 3 * 4, row-major, uninitialised.
+Matrix<double> A(3, 4, 0.0); // Matrix, filled with zeros.
+Matrix<double, Layout::ColMajor> B(3, 4); // Column-major layout.
+// C-styled arrays and std::array objects are supported as well.
+double arr[3][3] = {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
+Matrix<double> A(arr);
+Matrix<double> B = {{{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}}};
+
+// Static factory methods.
+auto A = Matrix<double>::identity(5);
+auto A = Matrix<double>::random(42, 100);
+auto A = Matrix<double>::zeros(42, 100);
+auto A = Matrix<double>::ones(100, 42);
+
+// Accessors.
+A(i, j); // Unchecked
+A.at(i, j); // checked indexation.
+A.rows();  A.cols();  A.stride();  A.data();
+
+A.reshape(new_rows, new_cols); // Total element count must be unchanged: rows * cols = new_rows * new_cols.
+
+auto tv = transpose(A); // MatrixView<double, RowMajor, true,  false, true>
+auto hv = hermitian(A); // MatrixView<double, RowMajor, true,  true,  false>
+auto mv = view(A); // MatrixView<double, RowMajor, false, false, true>
+```
+---
+## Expression infrastructure
+Expression templates are core elements of the library's logic: arithmetic operators return lightweight expression objects that are evaluated only when assigned to a `Vector` or `Matrix` object. This avoids intermediate allocations in chained operations.
+The tables below summarise possible expression uses.
+| Operation | Vector expression | Matrix expression | Note |
+| --- | --- | --- | --- |
+| Addition | `a + b` | `A + B` | cf. optimised BLAS `axpy` / `axpby` |
+| Subtraction | `a - b` | `A - B` |
+| Hadamard product | `a * b` | `elementwise_multiply(A, B)` | Default `operator*` for vectors. |
+| Elementwise division | `a / b` | `elementwise_divide(A, B)` | Default `operator/` for vectors. |
+| Scalar multiplication | `s * a`, `a * s` | `s * A`, `A * s` | cf. optimised `scal` |
+| Elementise scalar reciprocal/division | `s / a`, `a / s`| `s / A`, `A / s` |
+
+Other operations, supported by the expression infrastructure.
+| Operation | Expression | Note |
+| --- | --- | --- | 
+| Matrix-vector product | `A * v` | cf. optimised `gemv` |
+| Vector-matrix product | `v * A` |
+| Upper triangle etraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
+| Lower triangle etraction | `tril(A, k)` | k-offset, default is 0. |
+
+*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised `gemm` BLAS call instead.
+

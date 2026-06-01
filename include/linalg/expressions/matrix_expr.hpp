@@ -40,8 +40,8 @@ namespace linalg {
     /// @tparam Trans Transposition flag.
 	/// @tparam Conj Conjugation flag.
 	/// @tparam Mutable Mutability flag. 
-    template<typename T, Layout L, bool Trans, bool Conj, bool Mutable = false> // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
-    struct MatViewExpr : MatExpr<MatViewExpr<T, L, Trans, Conj, Mutable>> {
+    template<typename T, Layout L, bool Trans, bool Conj, bool Mutable = false> 
+    struct MatViewExpr : MatExpr<MatViewExpr<T, L, Trans, Conj, Mutable>> { // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
         /// @brief Storage of the view (by value).
         MatrixView<T, L, Trans, Conj, Mutable> view;
 
@@ -359,7 +359,8 @@ namespace linalg {
     /// @tparam E Type of the expression.
     template<typename E>
     struct TriuExpr : MatExpr<TriuExpr<E>> {
-        const E& expr; int k;
+        const E& expr;
+        int k; //offset
 
         TriuExpr(const E& e, int k_) : expr(e), k(k_) {};
 
@@ -384,7 +385,8 @@ namespace linalg {
     /// @tparam E Type of the expression.
     template<typename E>
     struct TrilExpr : MatExpr<TrilExpr<E>> {
-        const E& expr; int k;
+        const E& expr; 
+        int k; // offset
 
         TrilExpr(const E& e, int k_) : expr(e), k(k_) {};
 
