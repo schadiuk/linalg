@@ -323,25 +323,23 @@ namespace linalg {
         } else {
             if (upper) {
                 // Forward pass over columns of A^T (= rows of A scanned upward)
-                for (size_t j = 0; j < N; ++j) {
-                    if (!unit)
-                        x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
-                    const T xj = x[j];
-                    for (size_t i = j + 1; i < N; ++i) {
-                        T aij = do_conj ? conj(static_cast<T>(A(j, i))) : static_cast<T>(A(j, i));
-                        x[i] -= aij * xj;
+                for (size_t i = 0; i < N; ++i) {
+                    T sum = x[i];
+                    for (size_t j = 0; j < i; ++j) {
+                        T aji = do_conj ? conj(static_cast<T>(A(j, i))) : static_cast<T>(A(j, i));
+                        sum -= aji * x[j];
                     };
+                    x[i] = unit ? sum : sum / (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
                 };
             } else {
-                for (size_t jj = 0; jj < N; ++jj) {
-                    const size_t j = N - 1 - jj;
-                    if (!unit)
-                        x[j] /= do_conj ? conj(static_cast<T>(A(j, j))) : static_cast<T>(A(j, j));
-                    const T xj = x[j];
-                    for (size_t i = 0; i < j; ++i) {
-                        T aij = do_conj ? conj(static_cast<T>(A(j, i))) : static_cast<T>(A(j, i));
-                        x[i] -= aij * xj;
+                for (size_t ii = 0; ii < N; ++ii) {
+                    const size_t i = N - 1 - ii;
+                    T sum = x[i];
+                    for (size_t k = i + 1; k < N; ++k) {
+                        T aki = do_conj ? conj(static_cast<T>(A(k, i))) : static_cast<T>(A(k, i));
+                        sum -= aki * x[k];
                     };
+                    x[i] = unit ? sum : sum / (do_conj ? conj(static_cast<T>(A(i, i))) : static_cast<T>(A(i, i)));
                 };
             };
         };
@@ -409,7 +407,7 @@ namespace linalg {
                 };
  
                 if (num_threads <= 1) {
-                    // Serial scatter: for each column j of A (= row j of A^T), update tp[0..j] with A[k,j]*x[j] for k <= j.
+                    // Serial scatter: for each column j of A (= row j of A^T), update tp[0...j] with A[k,j]*x[j] for k <= j.
                     for (size_t j = 0; j < N; ++j) {
                         const T xj = xp[j];
                         tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
@@ -504,7 +502,7 @@ namespace linalg {
                 Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
             };
  
-            // Zero-initialised output buffer — breaks x/tp aliasing.
+            // Zero-initialised output buffer: breaks aliasing.
             Vector<T> tmp(N, T(0));
             T* LINALG_RESTRICT tp = detail::assume_aligned<64>(tmp.data());
             const T* LINALG_RESTRICT xa = detail::assume_aligned<64>(xp);
