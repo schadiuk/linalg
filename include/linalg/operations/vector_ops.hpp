@@ -3,7 +3,13 @@
 #include <linalg/storage/vector.hpp>
 
 namespace linalg {
-    // Creates a Vector with num uniformly spaced values between start and stop, inclusive if endpoint is true
+    /// @brief Creation of a vector with uniformly spaced values between two given points.
+    /// @tparam T Scalar type.
+    /// @param start Initial value (always inclusive).
+    /// @param stop Final value.
+    /// @param num Number of values.
+    /// @param endpoint Boolean flag: includes the endpoint if set to `true` (default).
+    /// @return The linspace vector.
     template<typename T = double>
     Vector<T> linspace(T start, T stop, size_t num = 50, bool endpoint = true) {
         if (num == 0) return Vector<T>();
@@ -12,19 +18,23 @@ namespace linalg {
             res[0] = start;
             return res;
         };
-        const double denom = endpoint ? static_cast<double>(num - 1)
-                                      : static_cast<double>(num);
-        const double step  = (static_cast<double>(stop) - static_cast<double>(start)) / denom;
+        const T denom = endpoint ? static_cast<T>(num - 1) : static_cast<T>(num);
+        const T step  = (static_cast<T>(stop) - static_cast<T>(start)) / denom;
         Vector<T> res(num);
         parallel_for(num, PARALLEL_THRESHOLD_SIMPLE, [start, step, &res](size_t s, size_t e) {
             for (size_t i = s; i < e; ++i)
-                res[i] = static_cast<T>(static_cast<double>(start) + static_cast<double>(i) * step);
+                res[i] = static_cast<T>(static_cast<T>(start) + static_cast<T>(i) * step);
         });
         if (endpoint) res[num - 1] = stop;
         return res;
     };
  
-    // Creates a Vector with values beginning at start and incremented by step until reaching stop (exclusive)
+    /// @brief  Creation of a vector with incremented values.
+    /// @tparam T Scalar type.
+    /// @param start Initial value (always inclusive).
+    /// @param stop Final value (always exclusive). 
+    /// @param step Step (default is set to unit).
+    /// @return The arange vector.
     template<typename T = int>
     Vector<T> arange(T start, T stop, T step = T(1)) {
         if (step == T(0)) throw std::invalid_argument("arange: step cannot be zero");
@@ -64,11 +74,20 @@ namespace linalg {
         return res;
     };
 
-    // Convenience wrapper: arange(stop) -> [0, stop)
+    /// @brief Convenience: integer unit increment.
+    /// @tparam T Scalar type.
+    /// @param stop Endpoint.
+    /// @return arange(stop) -> [0, stop).
     template<typename T = int>
     Vector<T> arange(T stop) { return arange<T>(T(0), stop, T(1)); };
 
-    // Applies a unary fuction elementwise
+    /// @brief  Helper: applies unary fuction elementwise.
+    /// @tparam F Function type.
+    /// @tparam E Vector expression type.
+    /// @param func The function.
+    /// @param e `VecExpr` object (reference).
+    /// @return Corresponding `UnaryVecExpr`.
+    /// @note Supports algebraic and trigonometric functions on vectors, as well as `floor`, `ceil`, `round`.
     template<typename F, typename E>
     auto apply(F func, const VecExpr<E>& e) {
         return UnaryVecExpr<F, E>(func, e.self());
@@ -156,7 +175,10 @@ namespace linalg {
 
     template<typename E> auto conj(const VecExpr<E>& e) { return apply([](auto x){ return linalg::conj(x); }, e); };
 
-    // Sum reduction
+    /// @brief Sum reduction.
+    /// @tparam E expression type.
+    /// @param x `VecExpr` object (reference).
+    /// @return Sum of all entries.
     template<typename E>
     auto sum(const VecExpr<E>& x) {
         const auto& xx = x.self();
@@ -199,14 +221,21 @@ namespace linalg {
         return total_sum;
     };
 
-    // Mean reduction
+    /// @brief Meanreduction.
+    /// @tparam E expression type.
+    /// @param x `VecExpr` object (reference).
+    /// @return Mean value of all entries.
     template<typename E>
     auto mean(const VecExpr<E>& x) {
         auto s = sum(x);
         return s / static_cast<decltype(s)>(x.self().size());
     };
  
-    // Variance reduction (no Bessel's correction applied)
+    /// @brief Variance reduction.
+    /// @tparam E expression type.
+    /// @param x `VecExpr` object (reference).
+    /// @return Variance of all entries.
+    /// @note No Bessel's correction applied.
     template<typename E>
     double variance(const VecExpr<E>& x) {
         const auto& xx = x.self();
@@ -221,6 +250,10 @@ namespace linalg {
         return var / static_cast<double>(n);
     };
 
-    // Standard deviation (no Bessel's correction applied)
+    /// @brief Standard deviation.
+    /// @tparam E expression type.
+    /// @param x `VecExpr` object (reference).
+    /// @return Stddev of all entries.
+    /// @note No Bessel's correction applied.
     template<typename E> double stddev(const VecExpr<E>& x) { return std::sqrt(variance(x)); };
 };

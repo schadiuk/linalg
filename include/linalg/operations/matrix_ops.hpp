@@ -4,7 +4,13 @@
 #include <linalg/storage/vector.hpp>
 
 namespace linalg {
-    // Applies a unary fuction elementwise
+    /// @brief  Helper: applies unary fuction elementwise.
+    /// @tparam F Function type.
+    /// @tparam E Matrix expression type.
+    /// @param func The function.
+    /// @param e `MatExpr` object (reference).
+    /// @return Corresponding `UnaryMatExpr`.
+    /// @note Supports algebraic and trigonometric functions on matrices, as well as `floor`, `ceil`, `round`.
     template<typename F, typename E>
     auto apply(F func, const MatExpr<E>& e) {
         return UnaryMatExpr<F, E>(func, e.self());
@@ -60,10 +66,28 @@ namespace linalg {
         return apply([](auto x) { return std::atan(x); }, e);
     };
 
+    template<typename E>
+    auto sinh(const MatExpr<E>& e) {
+        return apply([](auto x) { return std::sinh(x); }, e);
+    };
+
+    template<typename E>
+    auto cosh(const MatExpr<E>& e) {
+        return apply([](auto x) { return std::cosh(x); }, e);
+    };
+
+    template<typename E>
+    auto tanh(const MatExpr<E>& e) {
+        return apply([](auto x) { return std::tanh(x); }, e);
+    };
+
     template<typename E, typename S>
     auto pow(const MatExpr<E>& e, S p) { return apply([p](auto x){ return std::pow(x, p); }, e); };
 
-    // Sum reduction
+    /// @brief Sum reduction.
+    /// @tparam E expression type.
+    /// @param x `MatExpr` object (reference).
+    /// @return Sum of all entries.
     template<typename E>
     auto sum(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -113,7 +137,10 @@ namespace linalg {
         return result;
     };
 
-    // Mean reduction
+    /// @brief Mean reduction.
+    /// @tparam E expression type.
+    /// @param x `MatExpr` object (reference).
+    /// @return Mean value of all entries.
     template<typename E>
     auto mean(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -122,7 +149,11 @@ namespace linalg {
         return s / static_cast<decltype(s)>(total);
     };
 
-    // Variance reduction (no Bessel's correction applied)
+    /// @brief Variance reduction.
+    /// @tparam E expression type.
+    /// @param x `MatExpr` object (reference).
+    /// @return Variance of all entries.
+    /// @note No Bessel's correction applied.
     template<typename E>
     double variance(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -138,7 +169,11 @@ namespace linalg {
         return var / static_cast<double>(total);
     };
 
-    // Standard deviation (no Bessel's correction applied)
+    /// @brief Standard deviation.
+    /// @tparam E expression type.
+    /// @param x `MatExpr` object (reference).
+    /// @return Stddev of all entries.
+    /// @note No Bessel's correction applied.
     template<typename E> double stddev(const MatExpr<E>& x) { return std::sqrt(variance(x)); };
 
     template<typename E> auto floor(const MatExpr<E>& e) { return apply([](auto x){ return std::floor(x); }, e); };
@@ -153,6 +188,10 @@ namespace linalg {
 
     template<typename E> auto conj(const MatExpr<E>& e) { return apply([](auto x){ return linalg::conj(x); }, e); };
 
+    /// @brief Trace reduction.
+    /// @tparam E expression type.
+    /// @param x `MatExpr` object (reference).
+    /// @return Sum of all diagonal elements.
     template<typename E>
     auto trace(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -164,22 +203,13 @@ namespace linalg {
         return tr;
     };
 
-    // Vector -> diagonal matrix
-    template<typename T, Layout L = Layout::RowMajor>
-    Matrix<T, L> diag(const Vector<T>& v, int k = 0) {
-        const size_t n = v.size();
-        const size_t abs_k = static_cast<size_t>(std::abs(k));
-        const size_t dim = n + abs_k;
-        Matrix<T, L> result = Matrix<T, L>::zeros(dim, dim);
-        if (k >= 0) {
-            for (size_t i = 0; i < n; ++i) { result(i, i + abs_k) = v[i]; };
-        } else {
-            for (size_t i = 0; i < n; ++i) { result(i + abs_k, i) = v[i]; };
-        };
-        return result;
-    };
-
-    // VecExpr -> diagonal matrix
+    /// @brief Construction of diagonal matrix from a given vector.
+    /// @tparam T scalar type.
+    /// @tparam L Layout.
+    /// @param v The vector.
+    /// @param k Diagonal offset (negative - lower shift, positive - upper).
+    /// @return The diagonal matrix.
+    /// @note Extracting a diagonal matrix from a given one will require using `diag(diag(A))`.
     template<typename E, Layout L = Layout::RowMajor>
     auto diag(const VecExpr<E>& v_expr, int k = 0) {
         const auto& v = v_expr.self();
@@ -197,33 +227,13 @@ namespace linalg {
         return result;
     };
 
-    // Matrix -> diagonal vector
-    template<typename T, Layout L>
-    Vector<T> diag(const Matrix<T, L>& mat, int k = 0) {
-        const size_t rows = mat.rows();
-        const size_t cols = mat.cols();
-        // Guard against unsigned underflow before performing size_t arithmetic
-        size_t diag_length = 0;
-        if (k >= 0) {
-            const size_t sk = static_cast<size_t>(k);
-            if (sk < cols) diag_length = std::min(rows, cols - sk);
-        } else {
-            const size_t sk = static_cast<size_t>(-k);
-            if (sk < rows) diag_length = std::min(rows - sk, cols);
-        };
-        if (diag_length == 0) return Vector<T>(0);
-        Vector<T> result(diag_length);
-        if (k >= 0) {
-            const size_t sk = static_cast<size_t>(k);
-            for (size_t i = 0; i < diag_length; ++i) { result[i] = mat(i, i + sk); };
-        } else {
-            const size_t sk = static_cast<size_t>(-k);
-            for (size_t i = 0; i < diag_length; ++i) { result[i] = mat(i + sk, i); };
-        };
-        return result;
-    };
-
-    // MatExpr -> diagonal vector
+    /// @brief Matrix diagonal extraction into a vector.
+    /// @tparam T scalar type.
+    /// @tparam L Layout. 
+    /// @param mat the matrix.
+    /// @param k Diagonal offset.
+    /// @return the vector.
+    /// @note Extracting a diagonal matrix from a given one will require using `diag(diag(A))`.
     template<typename E>
     auto diag(const MatExpr<E>& mat_expr, int k = 0) {
         const auto& mat = mat_expr.self();
@@ -252,13 +262,21 @@ namespace linalg {
         return result;
     };
 
-    // Extract upper triangular matrix
+    /// @brief Extraction of upper triangular part of a matrix
+    /// @param e `MatExpr` object.
+    /// @param k Diagonal offset.
+    /// @return Corresponding `TriuExpr`.
     template<typename E> auto triu(const MatExpr<E>& e, int k = 0) { return TriuExpr<E>(e.self(), k); };
 
-    // Extract lower triangular matrix
+    /// @brief Extraction of lower triangular part of a matrix
+    /// @param e `MatExpr` object.
+    /// @param k Diagonal offset.
+    /// @return Corresponding `TrilExpr`.
     template<typename E> auto tril(const MatExpr<E>& e, int k = 0) { return TrilExpr<E>(e.self(), k); };
 
-    // Collapse Matrix into a Vector
+    /// @brief Collapse matrix into a vector.
+    /// @param x The matrix.
+    /// @return Vector, sequentially constructed from rows of the matrix.
     template<typename E>
     auto flatten(const MatExpr<E>& x) {
         const auto& xx = x.self();

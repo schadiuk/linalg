@@ -19,6 +19,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 | C++ standard| C++20|
 | Compiler | GCC 12+, Clang 14+, MSVC 19.30+ |
 | Architecture | x86-64, ARM64, or any scalar target |
+
 No third-party assets needed, as the standard library is the only dependency. For installation, copy the `linalg/` directory and include the umbrella header:
 ```cpp
 #include <linalg.hpp>
@@ -61,6 +62,7 @@ v.data(); // Raw T* data pointer.
 Matrix<double> A(3, 4); // 3 * 4, row-major, uninitialised.
 Matrix<double> A(3, 4, 0.0); // Matrix, filled with zeros.
 Matrix<double, Layout::ColMajor> B(3, 4); // Column-major layout.
+
 // C-styled arrays and std::array objects are supported as well.
 double arr[3][3] = {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, 1.0}};
 Matrix<double> A(arr);
@@ -105,4 +107,79 @@ Other operations, supported by the expression infrastructure.
 | Lower triangle etraction | `tril(A, k)` | k-offset, default is 0. |
 
 *Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised `gemm` BLAS call instead.
+### Wrapping in expressions
+Optionally use `expr()` to wrap a storage object so it participates expression algebra:
+```cpp
+Vector<double> v = expr(A) * expr(b) + expr(c); // Enforces lazy evaluation.
+```
 
+---
+## Operations/utility functions
+The library supports a considerable subset of common mathematical functions, defined in the C++ numerics library. The functions are separated from `std` in `linalg` namespace, just as all other library assets.
+| Function class | Present in `linalg` | Notes |
+| --- | --- | --- |
+| Arithmetic | `abs`, `pow`, `sqrt`, `exp`, `log` | Functions are "inherited" from the standard C++, and applied pointwise. |
+| Nearest integer | `floor`, `ceil`, `round` |
+| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imag part extraction. |
+| Trigonometric | `sin`, `asin`, `cos`, `acos`, `tan`, `atan` |
+| Hyperbolic | `sinh`, `cosh`, `tanh`|
+| Reductions | Common: `sum`. Vector-specific: `dot`, `dotc` | cf. optimised BLAS `asum` for vectors. |
+| Statistics | `mean`, `variance`, `stddev` |
+
+User-defined utilties can be constructed using `UnaryMatExpr` or `UnaryVecExpr`.
+### Construction-specific
+Some useful utilities exist to construct structured vectors and matrices:
+```cpp
+// Uniform spacing.
+auto v = linspace<double>(0.0, 1.0, 100); // 100 points in [0., 1.] interval.
+auto v = linspace<double>(0.0, 1.0, 100, false); // The points in [0., 1.).
+
+// Ranges.
+auto v = arange(10); // [0, 1, 2, ... 9]
+auto v = arange(2, 8); // [2, 3, 4, ... 7]
+auto v = arange(0.0, 1.0, 0.1) // [0.0, 0.1, 0.2, ... 0.9]
+
+// Diagonal operations.
+auto d = diag(A); // Extract main diagonal from A as a vector.
+auto D = diag(v); // Build diagonal matrix from a vector.
+auto D = diag(diag(A)); // Build diagonal matrix from original A.
+
+// Flatten to vector.
+auto v = flatten(expr(A));
+
+// Triangular extraction.
+Matrix<T> U = triu(A); // Upper triangle.
+Matrix<T> L = tril(A, -1); // Strict lower triangle.
+
+```
+
+---
+## Quick start
+```cpp
+#include <linalg.hpp> // Umbrella header.
+#include <iostream>
+
+using namespace linalg; // All library classes and functions are enclosed in the namespace.
+
+int main() {
+    // Generate sample (trivial) matrix and RHS vector.
+    auto A = Matrix<double>::identity(3);
+    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
+
+    // Expression templates.
+    Vector<double> v = A * b;
+    std::cout << "v = " << v << "\n";
+    Vector<double> w = 2.0 * b + v;
+    std::cout << "w = " << w << "\n";
+
+    // Decomposition.
+    auto lu_res = lu(A);
+    Vector<double> sol = b;
+
+    lu_solve(lu_res, sol); // In-place solution of A * x = b.
+
+    std::cout << "Solution: " << sol << "\n";
+    std::cout << "Residual norm: " << norm(A * sol - b) << "\n";
+    return 0;
+};
+```
