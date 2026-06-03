@@ -3,7 +3,9 @@
 #include <linalg/storage/matrix.hpp>
 
 namespace linalg {
-    // L1 norm: maximum absolute column sum
+    /// @brief L1 norm.
+    /// @param x Matrix expression.
+    /// @return Maximum absolute column sum.
     template<typename E>
     double norm_l1(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -16,7 +18,9 @@ namespace linalg {
         return res;
     };
 
-    // Frobenius norm
+    /// @brief Frobenius norm.
+    /// @param x Matrix expression.
+    /// @return Square root of the sum of all elements' squares.
     template<typename E>
     double norm_fro(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -45,7 +49,9 @@ namespace linalg {
         return scale * std::sqrt(ssq);
     };
 
-    // Infinity norm: maximum absolute row sum
+    /// @brief Infinity norm.
+    /// @param x Matrix expression.
+    /// @return Maximum absolute row sum.
     template<typename E>
     double norm_inf(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -58,7 +64,10 @@ namespace linalg {
         return result;
     };
 
-    // Negative infinity norm: minimum absolute row sum
+    /// @brief Negative infinity "norm" (after NumPy convention).
+    /// @param x Matrix expression.
+    /// @return Minimum absolute row sum.
+    /// @note Whereas this fails the positive definedness condition, the "norm" is useful for detecting structural properties (e.g. singularity).
     template<typename E>
     double norm_neg_inf(const MatExpr<E>& x) {
         const auto& xx = x.self();
@@ -72,7 +81,10 @@ namespace linalg {
         return result;
     };
 
-    // Norm dispatch wrapper
+    /// @brief Matrix norm dispatch.
+    /// @param x Matrix expression.
+    /// @param kind Supported norm kinds: `fro` (default), `1`, `inf`, `-inf`.
+    /// @return Specified norm.
     template<typename E>
     double norm(const MatExpr<E>& x, std::string kind = "fro") {
         if (kind == "1") return norm_l1(x);

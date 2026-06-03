@@ -128,7 +128,7 @@ The library supports a considerable subset of common mathematical functions, def
 
 User-defined utilties can be constructed using `UnaryMatExpr` or `UnaryVecExpr`.
 ### Construction-specific
-Some useful utilities exist to construct structured vectors and matrices:
+Some useful utilities exist to construct structured vectors and matrices. Illustration below:
 ```cpp
 // Uniform spacing.
 auto v = linspace<double>(0.0, 1.0, 100); // 100 points in [0., 1.] interval.
@@ -150,8 +150,20 @@ auto v = flatten(expr(A));
 // Triangular extraction.
 Matrix<T> U = triu(A); // Upper triangle.
 Matrix<T> L = tril(A, -1); // Strict lower triangle.
-
 ```
+### Norms
+There are present matrix and vector norms, unified by common dispatch convention via `norm` function. List of them, indexed by `kind` argument, could be found in the table below.
+| Norm kind | Vector norm | Matrix norm | Notes |
+| --- | --- | --- | --- |
+| `0` | Number of non-zero entries. | None | L0 pseudo-norm. |
+| `1` | Absolute value sum. | Maximum absolute column sum. | L1 norm. |
+| `2` | Square root of the sum of all elements' squares. | None (yet?) | L2 norm (alternatively, `fro` for vectors). |
+| `fro` | Same as above. | Square root of the sum of all elements' squares. | Frobenius norm. |
+| `inf` | Maximum absolute entry. | Maximum absolute row sum. | Infinity norm. |
+| `-inf`* | Smallest absolute entry. | Minimum absolute row sum. | Negative infinity "norm". |
+
+**Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms.
+
 
 ---
 ## Quick start
