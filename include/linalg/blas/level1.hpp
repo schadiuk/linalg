@@ -5,7 +5,7 @@
 
 namespace linalg {
 	namespace detail {
-		// Type trait for complex scalars
+		// Type trait for complex scalars.
 		template<typename T> struct is_complex_impl : std::false_type {};
         template<typename T> struct is_complex_impl<std::complex<T>> : std::true_type {};
         template<typename T> inline constexpr bool is_complex_v = is_complex_impl<std::remove_cvref_t<T>>::value;
@@ -16,7 +16,7 @@ namespace linalg {
     		else return std::abs(static_cast<double>(v));
 		};
 
-		// Dense data accessor
+		// Dense data accessor.
 		template<typename T, typename E>
 		LINALG_INLINE const T* dense_data(const E& e) noexcept {
 			if constexpr (std::is_same_v<E, Vector<T>>) return e.data();
@@ -40,7 +40,7 @@ namespace linalg {
 			for (size_t i = s; i < e; ++i) y[i] = alpha * x[i] + beta * y[i];
 		};
 		
-		// x[i] *= alpha  (element-wise scale, no accumulation needed)
+		// x[i] *= alpha  (element-wise scale, no accumulation needed).
 		template<typename T>
 		LINALG_INLINE void scal_chunk(T alpha, T* LINALG_RESTRICT x, size_t s, size_t e) noexcept {
 			LINALG_UNROLL(4)
@@ -59,7 +59,7 @@ namespace linalg {
 				s2 += x[i+2] * y[i+2];
 				s3 += x[i+3] * y[i+3];
 			};
-			T acc = (s0 + s1) + (s2 + s3); // pairwise sum reduces rounding error?
+			T acc = (s0 + s1) + (s2 + s3); // Pairwise sum reduces rounding error.
 			for (size_t i = n4; i < e; ++i) acc += x[i] * y[i];
 			return acc;
 		};
@@ -130,7 +130,10 @@ namespace linalg {
 		};
 	};
 
-	// y += alpha * x
+	/// @brief Scaled vector addition.
+	/// @param alpha Scaling factor.
+	/// @param x Free vector operand.
+	/// @param y Vector to be updated (via `y += alpha * x`).
 	template<typename Alpha, typename EX, typename T>
 	LINALG_INLINE void axpy(Alpha alpha, const VecExpr<EX>& x, Vector<T>& y) {
 		const auto& xx = x.self();
@@ -180,7 +183,11 @@ namespace linalg {
 		});
 	};
 
-	// y = alpha * x + beta * y
+	/// @brief General two-scalar vector addition.
+	/// @param alpha Scaling factor (that of `x`).
+	/// @param beta Scaling factor (of `y`).
+	/// @param x Free vector operand.
+	/// @param y Vector to be updated (via `y = alpha * x + beta * y`).
 	template<typename Alpha, typename EX, typename Beta, typename T>
 	void axpby(Alpha alpha, const VecExpr<EX>& x, Beta beta, Vector<T>& y) {
 		const auto& xx = x.self();
@@ -225,7 +232,9 @@ namespace linalg {
 		});
 	};
 
-	// In-place scaling
+	/// @brief In-place scaling.
+	/// @param alpha Scaling factor.
+	/// @param x Vector to be scaled.
 	template<typename Alpha, typename T>
 	LINALG_INLINE void scal(Alpha alpha, Vector<T>& x) {
 		const T a = static_cast<T>(alpha);
@@ -252,6 +261,9 @@ namespace linalg {
 		};
 	};
 	
+	/// @brief In-place scaling.
+	/// @param alpha Scaling factor.
+	/// @param x Matrix to be scaled.
 	template<typename Alpha, typename T, Layout L>
 	LINALG_INLINE void scal(Alpha alpha, Matrix<T, L>& A) {
 		const T a = static_cast<T>(alpha);
@@ -274,7 +286,6 @@ namespace linalg {
 		});
 	};
 
-	// Delegation to assignment operators (supports mutable views)
 	template<typename EX, typename T>
 	LINALG_INLINE void copy(const VecExpr<EX>& x, Vector<T>& y) {
 		BOUNDS_CHECK(x.self().size() == y.size());
@@ -299,7 +310,6 @@ namespace linalg {
 		B = A;
 	};
 
-	// Elementwise swapping with overloads for all combinations of Vector/VectorView
 	template<typename T>
 	LINALG_INLINE void swap(Vector<T>& x, Vector<T>& y) {
 		BOUNDS_CHECK(x.size() == y.size());
@@ -330,7 +340,9 @@ namespace linalg {
 	template<typename T>
 	LINALG_INLINE void swap(VectorView<T, true>& x, Vector<T>& y) { swap(y, x); };
 
-	// Index of maximum absolute value
+	/// @brief Index of maximum absolute value. 
+	/// @param x Vector expression.
+	/// @return The index.
 	template<typename EX>
 	LINALG_INLINE size_t iamax(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
@@ -349,7 +361,9 @@ namespace linalg {
 		return max_idx;
 	};
 	
-	// Index of minimum absolute value
+	/// @brief Index of minimum absolute value. 
+	/// @param x Vector expression.
+	/// @return The index.
 	template<typename EX>
 	LINALG_INLINE size_t iamin(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
@@ -368,7 +382,10 @@ namespace linalg {
 		return min_idx;
 	};
 
-	// Sum of absolute values. Follows BLAS convention for complex types: abs(re(x)) + abs(im(x))
+	/// @brief Sum of absolute values.
+	/// @param x Vector expression.
+	/// @return The sum.
+	/// @note Follows BLAS convention for complex types: abs(re(x)) + abs(im(x)).
 	template<typename EX>
 	LINALG_INLINE double asum(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
@@ -389,7 +406,10 @@ namespace linalg {
 			});
 	};
 
-	// Dot product (naive)
+	/// @brief Dot product (naive).
+	/// @param x Left vector operand.
+	/// @param y Right vector operand.
+	/// @returns Reduction result.
 	template<typename EX, typename EY>
 	LINALG_INLINE auto dot(const VecExpr<EX>& x, const VecExpr<EY>& y) {
 		const auto& xx = x.self();
@@ -411,14 +431,16 @@ namespace linalg {
 			[&xx, &yy](size_t i) { return xx(i) * yy(i); });
 	};
 
-	// Complex dot (taking conjugate of the first argument)
+	/// @brief Dot product (complex).
+	/// @param x Left vector operand (conjugated).
+	/// @param y Right vector operand.
+	/// @returns Reduction result.
 	template<typename EX, typename EY>
 	LINALG_INLINE auto dotc(const VecExpr<EX>& x, const VecExpr<EY>& y) {
 		const auto& xx = x.self();
 		const auto& yy = y.self();
 		BOUNDS_CHECK(xx.size() == yy.size());
 		const size_t n = xx.size();
-		// BLAS zdotc: conj(x) * y
 		using T = std::remove_cvref_t<decltype(conj(xx(0)) * yy(0))>;
 		const T* xr = detail::dense_data<T>(xx);
 		const T* yr = detail::dense_data<T>(yy);
@@ -434,7 +456,9 @@ namespace linalg {
 			[&xx, &yy](size_t i) { return conj(xx(i)) * yy(i); });
 	};
 
-	// Euclidean norm
+	/// @brief  Euclidean norm.
+	/// @param x Vector expression.
+	/// @returns Reduction result. 
 	template<typename EX>
     double nrm2(const VecExpr<EX>& x) {
         const auto& xx = x.self();
@@ -476,17 +500,17 @@ namespace linalg {
 		return scale * std::sqrt(ssq);
     };
 
-	// Givens rotation parameters
-	// Finds (c, s) such that  [[c, s], [-s, c] ]^T * [a, b] = [r, 0]
-	// On exit: a <- r, b <- 0, c <- cos(theta), s <- sin(theta)
+	/// @brief Givens rotation parameters
 	template<typename T>
     LINALG_INLINE void rotg(T& a, T& b, T& c, T& s) requires std::is_floating_point_v<T> {
+			// Finds (c, s) such that  [[c, s], [-s, c]] * [a, b] = [r, 0].
+			// On exit: a <- r, b <- 0, c <- cos(theta), s <- sin(theta).
         T r = std::hypot(a, b);
         if (r == T(0)) {
             c = T(1); s = T(0); a = T(0); b = T(0);
             return;
         };
-        // Sign of r matches larger-magnitude component (minimises cancellation)
+        // Sign of r matches larger-magnitude component (minimises cancellation).
         if (std::abs(a) >= std::abs(b)) r = std::copysign(r, a);
         else r = std::copysign(r, b);
         c = a / r;
@@ -495,8 +519,7 @@ namespace linalg {
         b = T(0);
     };
  
-	// Complex overload computes a unitary rotation where c is real and
-    // s is complex such that: c^2 + abs(s)^2 = 1 by convention
+	// Complex overload computes a unitary rotation where c is real and s is complex such that: c^2 + abs(s)^2 = 1 by convention.
     template<typename T>
     LINALG_INLINE void rotg(std::complex<T>& a, std::complex<T>& b, T& c, std::complex<T>& s) {
         const T abs_a = std::abs(a);
@@ -507,17 +530,18 @@ namespace linalg {
             b = std::complex<T>(0);
             return;
         };
-        // Scale by abs_a to avoid intermediate overflow
+        // Scale by abs_a to avoid intermediate overflow.
         const T scale = abs_a + std::abs(b);
         const T an = std::abs(a / scale), bn = std::abs(b / scale);
         const T r_scaled = scale * std::sqrt(an * an + bn * bn);
-        const std::complex<T> phase = a / abs_a;        // unit complex: a / abs(a)
+        const std::complex<T> phase = a / abs_a; // unit complex: a / abs(a).
         c = abs_a / r_scaled;
         s = phase * std::conj(b) / r_scaled;
         a = phase * r_scaled;
         b = std::complex<T>(0);
     };
 
+	/// @brief Apply a Givens rotation.
 	template<typename T>
     LINALG_INLINE void rot(Vector<T>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> {
         BOUNDS_CHECK(x.size() == y.size());
@@ -563,7 +587,7 @@ namespace linalg {
     template<typename T>
     LINALG_INLINE void rot(VectorView<T, true>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> { rot(y, x, c, -s); };
  
-    // Complex rot uses complex s and real c
+    // Complex rot uses complex s and real c.
     // Applies: x[i] <- c * x[i] + s * y[i]
     //          y[i] <- -conj(s) * x[i] + c * y[i]
     template<typename T>

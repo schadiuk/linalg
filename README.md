@@ -24,13 +24,13 @@ No third-party assets needed, as the standard library is the only dependency. Fo
 ```cpp
 #include <linalg.hpp>
 ```
-Compile with C++20 and enable optimisations for best performance.
+Compile with C++20 and enable optimisations for best performance. Below are sample `g++` commands:
 
-Recommended set of flags (safe and reproducible):
+- Recommended set of flags (reproducible).
 ```
 g++ -std=c++20 -march=native -O2 my_file.cpp
 ```
-Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed):
+- Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed).
 ```
 g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize my_file.cpp
 ```
@@ -89,7 +89,7 @@ auto mv = view(A); // MatrixView<double, RowMajor, false, false, true>
 ## Expression infrastructure
 Expression templates are core elements of the library's logic: arithmetic operators return lightweight expression objects that are evaluated only when assigned to a `Vector` or `Matrix` object. This avoids intermediate allocations in chained operations.
 The tables below summarise possible expression uses.
-| Operation | Vector expression | Matrix expression | Note |
+| Operation | Vector expression | Matrix expression | Notes |
 | --- | --- | --- | --- |
 | Addition | `a + b` | `A + B` | cf. optimised BLAS `axpy` / `axpby` |
 | Subtraction | `a - b` | `A - B` |
@@ -99,7 +99,7 @@ The tables below summarise possible expression uses.
 | Elementise scalar reciprocal/division | `s / a`, `a / s`| `s / A`, `A / s` |
 
 Other operations, supported by the expression infrastructure.
-| Operation | Expression | Note |
+| Operation | Expression | Notes |
 | --- | --- | --- | 
 | Matrix-vector product | `A * v` | cf. optimised `gemv` |
 | Vector-matrix product | `v * A` |
@@ -163,6 +163,19 @@ There are present matrix and vector norms, unified by common dispatch convention
 | `-inf`* | Smallest absolute entry. | Minimum absolute row sum. | Negative infinity "norm". |
 
 **Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms.
+
+---
+## BLAS
+Another defining feature of the library is the presence of optimised routines, *de facto* constituting a considerable (though by no means exhaustive) subset of the BLAS (Basic Linear Algebra Subprograms) classic specification. 
+
+The existing routines follow standard 3-level convention:
+| Level | Meaning | Present in `linalg` | Notes |
+| --- | --- | --- | --- |
+| BLAS-1 | Vector operations | `axpy`, `axpby`, `scal`, `copy`, `swap`, `iamax`, `iamin`, `asum`, `dot`, `dotc`, `nrm2`, `rotg`, `rot` | There exist matrix overloads for `scal`, `copy`. |
+| BLAS-2 | Matrix-vector operations | `gemv`, `ger`, `gerc`, `trsv`, `trmv`, `symv`, `hemv` | `trsm` is inherently serial. |
+| BLAS-3 | Matrix-matrix operations | `gemm`, `trsm`, `syrk`, `herk` |
+
+*Note:* for in-depth coverage of BLAS cf. the dedicated reference.
 
 
 ---
