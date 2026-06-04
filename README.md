@@ -1,8 +1,19 @@
 # linalg
 An educational header-based C++ linear algebra library revolving around lazy expression templates and BLAS-like kernels.
 ---
+## Table of contents
+- [Overview](#overview)
+- [Features](#features)
+- [Prerequisites](#prerequisites)
+- [Core types](#core-types)
+- [Expression templates](#expression-infrastructure)
+- [Operations](#operationsutility-functions)
+- [BLAS](#blas)
+- [Quick start](#quick-start)
+---
 ## Overview
-`linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, hand-tuned GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
+`linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
+
 ---
 ## Features
 - **Header-only**: including a single header file is the only setup needed.
@@ -96,15 +107,15 @@ The tables below summarise possible expression uses.
 | Hadamard product | `a * b` | `elementwise_multiply(A, B)` | Default `operator*` for vectors. |
 | Elementwise division | `a / b` | `elementwise_divide(A, B)` | Default `operator/` for vectors. |
 | Scalar multiplication | `s * a`, `a * s` | `s * A`, `A * s` | cf. optimised `scal` |
-| Elementise scalar reciprocal/division | `s / a`, `a / s`| `s / A`, `A / s` |
+| Elementwise scalar reciprocal/division | `s / a`, `a / s`| `s / A`, `A / s` |
 
 Other operations, supported by the expression infrastructure.
 | Operation | Expression | Notes |
 | --- | --- | --- | 
 | Matrix-vector product | `A * v` | cf. optimised `gemv` |
 | Vector-matrix product | `v * A` |
-| Upper triangle etraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
-| Lower triangle etraction | `tril(A, k)` | k-offset, default is 0. |
+| Upper triangle extraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
+| Lower triangle extraction | `tril(A, k)` | k-offset, default is 0. |
 
 *Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised `gemm` BLAS call instead.
 ### Wrapping in expressions
@@ -115,12 +126,12 @@ Vector<double> v = expr(A) * expr(b) + expr(c); // Enforces lazy evaluation.
 
 ---
 ## Operations/utility functions
-The library supports a considerable subset of common mathematical functions, defined in the C++ numerics library. The functions are separated from `std` in `linalg` namespace, just as all other library assets.
+The library supports a substantial quantity of common mathematical functions, defined in the [C++ numerics library](https://en.cppreference.com/cpp/numeric). The functions are separated from `std` in `linalg` namespace, just as all other library assets.
 | Function class | Present in `linalg` | Notes |
 | --- | --- | --- |
 | Arithmetic | `abs`, `pow`, `sqrt`, `exp`, `log` | Functions are "inherited" from the standard C++, and applied pointwise. |
 | Nearest integer | `floor`, `ceil`, `round` |
-| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imag part extraction. |
+| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imag part extraction when assigned. |
 | Trigonometric | `sin`, `asin`, `cos`, `acos`, `tan`, `atan` |
 | Hyperbolic | `sinh`, `cosh`, `tanh`|
 | Reductions | Common: `sum`. Vector-specific: `dot`, `dotc` | cf. optimised BLAS `asum` for vectors. |
@@ -162,7 +173,7 @@ There are present matrix and vector norms, unified by common dispatch convention
 | `inf` | Maximum absolute entry. | Maximum absolute row sum. | Infinity norm. |
 | `-inf`* | Smallest absolute entry. | Minimum absolute row sum. | Negative infinity "norm". |
 
-**Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms.
+**Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms (cf. the [documentation](https://numpy.org/doc/stable/reference/generated/numpy.linalg.norm.html)). 
 
 ---
 ## BLAS
@@ -175,7 +186,7 @@ The existing routines follow standard 3-level convention:
 | BLAS-2 | Matrix-vector operations | `gemv`, `ger`, `gerc`, `trsv`, `trmv`, `symv`, `hemv` | `trsm` is inherently serial. |
 | BLAS-3 | Matrix-matrix operations | `gemm`, `trsm`, `syrk`, `herk` |
 
-*Note:* for in-depth coverage of BLAS cf. the dedicated reference.
+*Note:* for in-depth coverage of BLAS cf. the [dedicated reference](reference/BLAS.md).
 
 
 ---
