@@ -1,10 +1,11 @@
 # BLAS Reference
-This document explores every BLAS-level operation in the `linalg` library: the mathematical definition of each routine, a full account of the internal algorithm and engineering decisions behind it, and usage examples.
+This document explores every BLAS-level operation in the `linalg` library: the mathematical definition of each routine, a full account of the internal algorithm and engineering decisions behind it.
 ---
 ## Table of contents
 - [Parallelisation model](#parallelisation-model)
 - [Conventions](#conventions)
 - [BLAS-1](#level-1-vector-operations)
+- [BLAS-2](#level-2-matrix-vector-operations)
 ---
 ## Parallelisation model
 As `linalg` actively uses threading capabilities of C++, understanding the library's parallelisation infrastructure is a prerequisite for all further reasoning about the behaviour and design of kernels.
@@ -43,7 +44,7 @@ parallel_for(total, threshold, func); // func receives (start, end) for its assi
  
 **Thread count selection.** When above the threshold, the number of threads spawned is:
  
-$$\text{num\_threads} = \min\!\bigl(\text{pool.thread\_count()},\;\lceil\text{total}/\text{threshold}\rceil\bigr)$$
+$$\text{num\_threads} = \min\bigl(\text{pool.thread\_count()},\;\lceil\text{total}/\text{threshold}\rceil\bigr)$$
  
 This cap ensures every thread always receives at least `threshold` elements of work, preventing the task-spawn overhead from dominating for barely-above-threshold inputs.
 
@@ -94,7 +95,7 @@ The thresholds are shared and used in different contexts across the library. The
 | `uplo` | `'U'` / `'L'` | Upper or lower triangle of A. |
 | `trans` | `'N'` / `'T'` / `'C'` | No transpose / transpose / conjugate transpose. |
 | `diag` | `'N'` / `'U'` | Non-unit diagonal / unit diagonal (diagonal entries treated as exactly 1, never read). |
-| `side` | `'L'` / `'R'` | Triangular factor multiplies from the keft or right. |
+| `side` | `'L'` / `'R'` | Triangular factor multiplies from the left or right. |
  
 - Template parameters: `T` is the scalar type (`float`, `double`, `std::complex<float>`, `std::complex<double>`); `L` is `Layout::RowMajor` (default) or `Layout::ColMajor`.
 
@@ -236,7 +237,7 @@ The max scan is sequential because extracting a maximum in parallel would requir
 double s = asum(expr(x));
 ```
 
-**Operation:**  $\sum_i \bigl(|\operatorname{Re}(x_i)| + |\operatorname{Im}(x_i)|\bigr)$. That is $\sum_i |x_i|$ for real types.
+**Operation:**  $\sum_i \bigl(|Re(x_i)| + |Im(x_i)|\bigr)$. That is $\sum_i |x_i|$ for real types.
 
 The 4-accumulator chunk kernel handles both real and complex cases via `if constexpr (is_complex_v<T>)`, which is resolved entirely at compile time so no branch appears in the compiled output. All accumulation is in `double` for the same precision reasons as `nrm2`. Dispatched via `parallel_reduce_chunks`.
 
@@ -271,14 +272,14 @@ rotg(a, b, c, s);
  
 $$\begin{bmatrix} c & s \\ -s & c \end{bmatrix} \begin{bmatrix} a \\ b \end{bmatrix} = \begin{bmatrix} r \\ 0 \end{bmatrix}$$
  
-**Algorithm.** Compute $r = \operatorname{hypot}(a, b)$, which is overflow-safe by specification. Then $c = a/r$, $s = b/r$. The sign of $r$ is assigned to match whichever of $|a|$, $|b|$ is larger:
+**Algorithm.** Compute $r = hypot(a, b)$, which is overflow-safe by specification. Then $c = a/r$, $s = b/r$. The sign of $r$ is assigned to match whichever of $|a|$, $|b|$ is larger:
  
 ```cpp
 if (std::abs(a) >= std::abs(b)) r = std::copysign(r, a);
 else r = std::copysign(r, b);
 ```
 
-This minimises cancellation in the subsequent divisions. If $|a|$ dominates and $r = \operatorname{sign}(a) \cdot \operatorname{hypot}$, then $c = a/r \approx 1$ (no cancellation) and $s = b/r$ is small.
+This minimises cancellation in the subsequent divisions. If $|a|$ dominates and $r = sign(a) \cdot hypot$, then $c = a/r \approx 1$ (no cancellation) and $s = b/r$ is small.
 
 - `rotg` (complex)
 For complex types, the rotation is unitary with $c$ real and $s$ complex, satisfying $c^2 + |s|^2 = 1$. The algorithm is as follows:
@@ -307,3 +308,248 @@ for (size_t i = rs; i < re; ++i) {
 ```
 
 Two reads and two writes per element, two FMA pairs per iteration. The complex overload replaces $-s$ with $-\overline{s}$ in the $y$ update. $\overline{s}$ is computed once outside the loop (`cs = conj(s)` earlier in the implementation) and captured by the lambda, keeping the hot loop free of unnecessary complex arithmetic.
+
+---
+## Level 2: matrix-vector operations
+
+Level 2 routines perform $O(MN)$ arithmetic with $O(MN)$ memory traffic - arithmetic intensity close to 1 op/byte for double. They are bandwidth-bound for large matrices. The central engineering concerns are cache-line-friendly access order, selecting the correct parallelism axis for the storage layout, and avoiding extra passes over large working sets.
+- [`gemv`](#gemv-general-matrix-vector-multiply)
+- [`trsv`](#trsv-single-rhs-triangular-solve)
+- [`trmv`](#trmv-triangular-matrix-vector-product)
+- [`ger` / `gerc`](#ger-and-gerc-rank-1-updates)
+- [`symv` / `hemv`](#symv-and-hemv-symmetrichermitian-matrix-vector-products)
+
+---
+### Infrastructure
+
+Level 2 introduces a unified helper `detail::resolve_vec<T>(expr, tmp)`, which either recovers a raw pointer plus stride via `raw_vec_ptr`, or materialises the expression into `tmp` and returns `{tmp.data(), 1}`. This replaces *ad hoc* materialisation scattered across callers, ensuring all Level 2 routines handle strided views and arbitrary expressions consistently.
+
+---
+### `gemv`: general matrix-vector multiply
+```cpp
+// y = alpha * A * x + beta * y, A is M * N matrix.
+gemv(alpha, expr(A), expr(x), beta, y);
+gemv<double, Layout::ColMajor>(alpha, expr(A), expr(x), beta, y);
+```
+ 
+**Operation:** $y \leftarrow \alpha A x + \beta y$.
+
+**Dispatch:** `gemv_impl` operates in two stages. First, `resolve_vec<T>` obtains `(x_ptr, incx)`; a non-unit stride is handled explicitly in the kernel, avoiding materialisation for the common case of column-views. Second, `raw_mat_info<T>` attempts to extract `(data*, lda, Layout)` from the matrix expression; on failure the expression is materialised into a temporary `Matrix<T, L>`. Kernel dispatch follows from `a_info->layout`.
+
+- Row-major kernel
+```cpp
+parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
+    for (size_t i = rs; i < re; ++i) {
+            const T* LINALG_RESTRICT a_row = A + i * lda;
+            T acc = T(0);
+            if (incx == 1) { // Unit-stride: vectorisable dot product.
+            LINALG_VECTORIZE
+            for (size_t j = 0; j < N; ++j) acc += a_row[j] * x[j];
+        } else {
+            for (size_t j = 0; j < N; ++j) acc += a_row[j] * x[j * incx];
+        };
+        y[i] = (beta == T(0)) ? alpha * acc : alpha * acc + beta * y[i];
+    };
+});
+```
+ 
+For row-major matrix $A$, `a_row[j]` for $j = 0\ldots N{-}1$ is a contiguous scan that enables optimal cache utilisation. `x[j]` is also contiguous when `incx == 1`. Parallelism is over rows: each thread owns a disjoint range of output elements $y[r_s, r_e)$ with no write conflicts and no reduction required. The `beta == T(0)` special case overwrites $y_i$ without reading it, avoiding a potential NaN propagation.
+
+- Column-major kernel
+
+For `ColMajor` storage, $A[i,j]$ resides at address `data + j*lda + i`: iterating over $j$ for fixed $i$ accesses memory with stride `lda`, producing one cache miss per element for large `lda`. The kernel transposes the loop order to a SAXPY-like sweep over columns:
+ 
+$$y \mathrel{+}= x_0 \cdot A[:,0] \;+\; x_1 \cdot A[:,1] \;+\; \ldots$$
+ 
+Each inner axpy reads a contiguous column of $A$. For the parallel path, since the SAXPY loop cannot be parallelised over $j$ without write conflicts on $y$, each thread accumulates into a private local vector of size $M$:
+ 
+After the join barrier, the local vectors are summed into $y$ via a vectorised reduction loop. The private accumulators are `std::vector<T, AlignedAllocator<T>>`, each separately 64-byte aligned to avoid false sharing between threads.
+
+---
+### `trsv`: single RHS triangular solve
+```cpp
+trsv('U', 'N', 'N', expr(A), x); // Upper, no-trans, non-unit diagonal.
+trsv('L', 'N', 'U', expr(A), x); // Lower, no-trans, unit diagonal.
+trsv('U', 'T', 'N', expr(A), x); // Upper transpose.
+trsv('L', 'T', 'N', expr(A), x); // Lower transpose.
+trsv('U', 'C', 'N', expr(A), x); // Upper conjugate-transpose.
+```
+ 
+**Operation.** Solve $op(A)\,x = b$ in-place, where $b$ is the input value of $x$ and $op \in \{I, {}^\top, {}^H\}$. `trsv` is inherently serial: each component depends on all previously computed components.
+
+- Non-transposed cases
+
+    * **Upper** - backward substitution. For each $i$ from $N{-}1$ down to $0$:
+    $$x_i = \frac{x_i - \sum_{j > i} A_{ij} x_j}{A_{ii}}$$
+     * **Lower** - forward substitution. For each $i$ from $0$ to $N{-}1$:
+    $$x_i = \frac{x_i - \sum_{j < i} A_{ij} x_j}{A_{ii}}$$
+    Both inner loops are annotated with `LINALG_VECTORIZE`. For RowMajor storage, the access $A(i,j)$ for $j > i$ (upper) or $j < i$ (lower) is contiguous in the inner loop, so the auto-vectoriser can emit an efficient dot product.
+
+- Transposed cases - gather loops
+
+    * **Upper transposed**. Solving $A^\top x = b$ for upper $A$ expands the $j$-th equation as:
+ 
+    $$\sum_{i \le j} A_{ij} x_i = b_j \implies x_j = \frac{b_j - \sum_{i < j} A_{ij} x_i}{A_{jj}}$$
+ 
+    All contributions to $x_j$ from already-resolved $x_{0 \ldots j-1}$ must be **gathered** before the diagonal division.
+
+    * **Lower transposed — backward gather.** For each $i$ from $N{-}1$ down to $0$:
+ 
+    $$x_i = \frac{x_i - \sum_{k > i} A_{ki} x_k}{A_{ii}}$$
+In both transposed cases the `do_conj` flag is checked only when forming the pre-computed local `aji` / `aki`, adding at most one branch per outer iteration with zero overhead in the inner loop.
+
+---
+### `trmv`: triangular matrix-vector-product
+```cpp
+trmv('U', 'N', 'N', expr(A), x);  // x = A * x.
+trmv('L', 'T', 'U', expr(A), x);  // x = A^T * x, unit diagonal.
+trmv('U', 'C', 'N', expr(A), x);  // x = A^H * x.
+```
+ 
+**Operation:** $x \leftarrow op(A)\,x$ in-place.
+ 
+Computing $x^\text{new}_i = \sum_j A_{ij} x^\text{old}_j$ while overwriting $x$ corrupts the source. The implementation resolves this by writing into a zeroed temporary `tmp`, then copying `tmp` back to `x`. The updated source completely rewrites `trmv` into eight specialised kernels (placed in `detail::trmv`) parameterised at compile time by `Layout L`, `bool Unit`, and `bool DoConj`, eliminating all runtime branching inside the hot loops. Layout and diagonal flags are encoded as `std::integral_constant` values so template arguments are resolved at instantiation time:
+```cpp
+if (!do_trans) {
+    if (unit) dispatch_notrans(std::true_type{});
+    else dispatch_notrans(std::false_type{});
+} else {
+    if (unit && do_conj) dispatch_trans(std::true_type{}, std::true_type{});
+    // etc.
+};
+```
+
+- Non-transposed kernels (`trmv_notrans_upper`, `trmv_notrans_lower`)
+ 
+Both no-transpose kernels are **parallelised over rows** via `parallel_for`. Each row computes a dot product of the relevant triangle row with the original `x`. For instance,
+```cpp
+template<typename T, Layout L, bool Unit>
+LINALG_INLINE void trmv_notrans_upper(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
+    parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
+        for (size_t i = rs; i < re; ++i) {
+            T sum;
+            if constexpr (L == Layout::RowMajor) {
+                const T* LINALG_RESTRICT row = Ap + i * lda;
+                sum = Unit ? xp[i] : row[i] * xp[i];
+                LINALG_VECTORIZE
+                for (size_t j = i + 1; j < N; ++j) sum += row[j] * xp[j];
+            } else {
+                // ColMajor: A[i,j] = Ap[j*lda + i].
+                sum = Unit ? xp[i] : Ap[i * lda + i] * xp[i];
+                // j > i: each column j is non-contiguous in i but x[j] is scalar.
+                for (size_t j = i + 1; j < N; ++j) sum += Ap[j * lda + i] * xp[j];
+            };
+            tp[i] = sum;
+        };
+    });
+};
+```
+
+For RowMajor storage the off-diagonal run `row[j]` for $j > i$ is contiguous, enabling the `LINALG_VECTORIZE` pragma.
+- Transposed kernels (`trmv_trans_upper`, `trmv_trans_lower`)
+ 
+The transposed operation computes $tp_k = \sum_j A^\top_{kj} x_j = \sum_j A_{jk} x_j$. This is a scatter pattern over columns of $A^\top$ (equivalently, rows of $A$). Since the scatter writes to multiple locations of `tp` (which would conflict if parallelised naively), both transposed kernels use **thread-local accumulator pattern** (as in `gemv_kernel_col`):
+```cpp
+if (num_threads <= 1) {
+    // Serial scatter: for each column j of A (= row j of A^T), update tp[0...j] with A[k,j]*x[j] for k <= j.
+    for (size_t j = 0; j < N; ++j) {
+        const T xj = xp[j];
+        tp[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+        for (size_t k = j + 1; k < N; ++k) tp[k] += Aval(j, k) * xj;
+    };
+    return;
+};
+using AlignedVec = std::vector<T, AlignedAllocator<T>>;
+std::vector<AlignedVec> locals(num_threads, AlignedVec(N, T(0)));
+std::vector<std::future<void>> futures;
+futures.reserve(num_threads);
+for (size_t t = 0; t < num_threads; ++t) {
+    futures.push_back(pool.enqueue([=, &locals, &Aval]() {
+        T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
+        for (size_t j = t; j < N; j += num_threads) {
+            const T xj = xp[j];
+            loc[j] += (Unit ? T(1) : Aval(j, j)) * xj;
+            for (size_t k = j + 1; k < N; ++k) loc[k] += Aval(j, k) * xj;
+        };
+    }));
+}; // Followed by: tp[i] += sum over locals.
+```
+
+---
+### `ger` and `gerc`: rank-1 updates
+```cpp
+ger (alpha, expr(x), expr(y), A); // A += alpha * x * y^T
+gerc(alpha, expr(x), expr(y), A); // A += alpha * x * conj(y)^T
+```
+
+**Operations:** $A_{ij} \leftarrow A_{ij} + \alpha x_i y_j$ and $A_{ij} \leftarrow A_{ij} + \alpha x_i \overline{y_j}$ respectively.
+
+In the updated source, `ger` and `gerc` share a single `ger_kernel<T, L, Conj>` template. The `Conj` boolean is a **compile-time parameter**, eliminating the runtime branch or pre-conjugation pass that appeared in the previous version. The inner loop of the RowMajor path reads:
+ 
+```cpp
+if constexpr (Conj) {
+    LINALG_VECTORIZE
+    for (size_t j = 0; j < N; ++j) a_row[j] += xi * conj(ya[j]);
+} else {
+    LINALG_VECTORIZE
+    for (size_t j = 0; j < N; ++j) a_row[j] += xi * ya[j];
+};
+```
+ 
+The `if constexpr` is resolved at instantiation, so each specialisation contains exactly one branch-free vectorised loop. For real types, `Conj = true` instantiates the same loop body as `Conj = false` since `conj` is the identity, producing bit-identical compiled code.
+ 
+Before invoking the kernel, both `x` and `y` are resolved via `resolve_vec<T>`. If either has a non-unit stride, it is materialised into a unit-stride buffer so the inner SAXPY loop can use `LINALG_VECTORIZE` without gather penalties.
+ 
+- RowMajor kernel is parallelised over rows. For each row $i$, `xi = alpha * x[i]` is hoisted out of the $j$-loop, reducing the inner loop from two multiplies per element to one.
+ 
+- ColMajor kernel. Parallelised over columns. For each column $j$, `yj = alpha * (Conj ? conj(y[j]) : y[j])` is hoisted, then a vectorised axpy updates the contiguous column of $A$.
+
+---
+### `symv` and `hemv`: symmetric/Hermitian matrix-vector products
+```cpp
+symv(uplo, alpha, expr(A), expr(x), beta, y); // y = alpha * A * x + beta * y, A is symmetric.
+hemv(uplo, alpha, expr(A), expr(x), beta, y); // y = alpha * A * x + beta * y, A - Hermitian.
+```
+ 
+**Operations:** $y \leftarrow \alpha A x + \beta y$ where $A$ is symmetric ($A = A^\top$) or Hermitian ($A = A^H$) and only the triangle specified by `uplo` is referenced.
+
+Both routines are implemented via a single shared `symv_hemv_kernel<T, L, DoConj>` function. The `DoConj` template parameter selects between symmetric and Hermitian behaviour at compile time, completely eliminating the runtime conditional in the hot loop. The implementation also extends pointer extraction to the matrix operand: `raw_mat_info<T>` is attempted on `A`, and the layout obtained is forwarded to the kernel (which handles both `Layout::RowMajor` and `Layout::ColMajor` via the `Aload` lambda). This eliminates the unconditional RowMajor materialisation.
+ 
+**Two-vector sweep algorithm.** The key algorithm is processing of the stored triangle in a single pass that simultaneously updates *both* the direct and the symmetric scatter contributions. Each stored element $A_{ij}$ is touched exactly once, halving the number of cache-line loads compared to a two-pass implementation:
+```cpp
+// Upper storage branch:
+for (size_t i = 0; i < N; ++i) {
+    // Diagonal (real part for Hermitian).
+    const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
+    T sum_i = aii * xp[i];
+    for (size_t j = i + 1; j < N; ++j) {
+        const T aij = Aload(i, j);
+        sum_i += aij * xp[j];
+        // Symmetric contribution: A[j,i] = conj(A[i,j]) for Hermitian.
+        if constexpr (DoConj) yp[j] += alpha * conj(aij) * xp[i];
+        else yp[j] += alpha * aij * xp[i];
+    };
+    yp[i] += alpha * sum_i;
+};
+```
+
+Parallelising the serial two-vector sweep directly would cause write conflicts on `yp[j]` (the scatter target). The parallel path separates the two contributions into independent arrays:
+ 
+- `row_acc[t][i]`: direct dot-product contribution to $y_i$ accumulated by thread $t$ over its assigned range of $i$ values.
+- `scatter[t][j]`: symmetric contributions to $y_j$ accumulated by thread $t$ over the same range.
+Threads are assigned contiguous blocks of rows using static partitioning. After the join barrier, a final `parallel_for` reduces both arrays into `yp[i]`:
+```cpp
+parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [&](size_t rs, size_t re) {
+    for (size_t i = rs; i < re; ++i) {
+        T acc = row_acc[0][i];
+        LINALG_VECTORIZE
+        for (size_t t = 1; t < num_threads; ++t) acc += row_acc[t][i];
+        T sct = scatter[0][i];
+        LINALG_VECTORIZE
+        for (size_t t = 1; t < num_threads; ++t) sct += scatter[t][i];
+        yp[i] += alpha * (acc + sct);
+    };
+});
+```
+
+This is analogous to the private-accumulator reduction in `gemv_kernel_col`, with the addition of a separate `scatter` array to hold the off-diagonal symmetric contributions.

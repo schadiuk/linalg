@@ -5,8 +5,8 @@
 
 namespace linalg {
     namespace detail {
-        // Resolving a VecExpr object to a const T* pointer for use in pointer-based loops
-        // Returns nullopt when the expression is not a contiguous Vector or unit-stride VectorView, forcing the caller to materialise first
+        // Resolving a VecExpr object to a const T* pointer for use in pointer-based loops.
+        // Returns nullopt when the expression is not a contiguous Vector or unit-stride VectorView, forcing the caller to materialise first.
         template<typename T>
         struct VecInfo { const T* data; size_t stride; };
 
@@ -30,11 +30,11 @@ namespace linalg {
             return std::nullopt;
         };
 
-        // Structure yielding a layout-aware raw-pointer descriptor for a matrix block
+        // Structure yielding a layout-aware raw-pointer descriptor for a matrix block.
         template<typename T>
         struct MatInfo { const T* data; size_t lda; Layout layout; };
  
-        // Fallback: any generic expression must be materialised
+        // Fallback: any generic expression must be materialised.
         template<typename T, typename E>
         LINALG_INLINE std::optional<MatInfo<T>> raw_mat_info(const MatExpr<E>&) {
             return std::nullopt;
@@ -46,22 +46,21 @@ namespace linalg {
             return MatInfo<T>{ e.self().data(), e.self().stride(), L };
         };
  
-        // MatRef<T,L> - thin const-reference wrapper around a Matrix
+        // MatRef<T,L> - thin const-reference wrapper around a Matrix.
         template<typename T, Layout L>
         LINALG_INLINE std::optional<MatInfo<T>> raw_mat_info(const MatExpr<MatRef<T,L>>& e) {
             return MatInfo<T>{ e.self().mat.data(), e.self().mat.stride(), L };
         };
  
         // Non-transposed, non-conjugated MatrixView (Mut = true or false).
-        // Any such view has a valid strided-BLAS pointer regardless of tightness:
-        // stride() is always the correct leading dimension for the BLAS kernels
+        // Any such view has a valid strided-BLAS pointer regardless of tightness: stride() is always the correct leading dimension for the BLAS kernels
         template<typename T, Layout L, bool Mut>
         LINALG_INLINE std::optional<MatInfo<T>> raw_mat_info(const MatExpr<MatViewExpr<T, L, false, false, Mut>>& e) {
             const auto& v = e.self().view;
             return MatInfo<T>{ v.data(), v.stride(), L };
         };
 
-        // Internal materialisation helper
+        // Internal materialisation helper.
         template<typename T, typename EV>
         LINALG_INLINE Vector<T> materialise(const VecExpr<EV>& v) {
             const auto& vv = v.self();
@@ -84,17 +83,16 @@ namespace linalg {
             return { tmp.data(), size_t(1) };
         };
 
-        // Namespace containing optimised kernels
+        // Namespace containing optimised kernels.
         namespace kernels {
-            // Fused pointer-level gemv kernel for RowMajor layout
+            // Fused pointer-level gemv kernel for RowMajor layout.
             template<typename T>
             LINALG_INLINE void gemv_kernel_row(T alpha, const T* LINALG_RESTRICT A, size_t lda, const T* x, size_t incx, T beta, T* LINALG_RESTRICT y, size_t M, size_t N) {
-                const T* Ap = detail::assume_aligned<64>(A);
                 parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
                     for (size_t i = rs; i < re; ++i) {
                         const T* LINALG_RESTRICT a_row = A + i * lda;
                         T acc = T(0);
-                        if (incx == 1) { // Unit-stride: vectorisable dot product
+                        if (incx == 1) { // Unit-stride: vectorisable dot product.
                         LINALG_VECTORIZE
                         for (size_t j = 0; j < N; ++j) acc += a_row[j] * x[j];
                     } else {
@@ -105,10 +103,10 @@ namespace linalg {
                 });
             };
 
-            // ColMajor kernel
+            // ColMajor kernel.
             template<typename T>
             LINALG_INLINE void gemv_kernel_col(T alpha, const T* LINALG_RESTRICT A, size_t lda, const T* x, size_t incx, T beta, T* LINALG_RESTRICT y, size_t M, size_t N) {
-                if (beta == T(0)) std::fill(y, y + M, T(0)); // NaN does not affect zeroing
+                if (beta == T(0)) std::fill(y, y + M, T(0)); // NaN does not affect zeroing.
                 else if (beta != T(1)) {
                     LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) y[i] *= beta;
                 };
@@ -117,7 +115,7 @@ namespace linalg {
                 auto& pool = ThreadPool::instance();
                 const size_t num_threads = std::min(pool.thread_count(), (N + PARALLEL_THRESHOLD_COMPUTE - 1) / PARALLEL_THRESHOLD_COMPUTE);
                 if (num_threads <= 1) {
-                    // Serial path: straightforward column accumulation, stride-1 inner loop
+                    // Serial path: straightforward column accumulation, stride-1 inner loop.
                     for (size_t j = 0; j < N; ++j) {
                         const T xj = alpha * x[j * incx];
                         if (xj == T(0)) continue;
@@ -126,7 +124,7 @@ namespace linalg {
                     };
                     return;
                 };
-                // Parallel path: each thread accumulates a subset of columns into a private vector, then the private results are summed into y
+                // Parallel path: each thread accumulates a subset of columns into a private vector, then the private results are summed into y.
                 using AlignedVec = std::vector<T, AlignedAllocator<T>>;
                 std::vector<AlignedVec> locals(num_threads, AlignedVec(M, T(0)));
                 std::vector<std::future<void>> futures;
@@ -143,7 +141,7 @@ namespace linalg {
                     }));
                 };
                 for (auto& f : futures) f.get();
-                // Reduce thread-local sums into y
+                // Reduce thread-local sums into y.
                 for (size_t t = 0; t < num_threads; ++t) {
                     const T* LINALG_RESTRICT loc = detail::assume_aligned<64>(locals[t].data());
                     LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) y[i] += loc[i];
@@ -157,7 +155,7 @@ namespace linalg {
                 const T* xa = detail::assume_aligned<64>(xp);
                 const T* ya = detail::assume_aligned<64>(yp);
                 if constexpr (L == Layout::RowMajor) {
-                    // Parallel over rows
+                    // Parallel over rows.
                     parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
                         for (size_t i = rs; i < re; ++i) {
                             const T xi = alpha * xa[i];
@@ -172,7 +170,7 @@ namespace linalg {
                         };
                     });
                 } else {
-                    // Parallel over columns
+                    // Parallel over columns.
                     parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t js, size_t je) {
                         for (size_t j = js; j < je; ++j) {
                             const T yj = alpha * (Conj ? conj(ya[j]) : ya[j]);
@@ -185,7 +183,7 @@ namespace linalg {
             };
         };
 
-        // Dispatch: extracts raw pointers whenever possible, else materialises
+        // Dispatch: extracts raw pointers whenever possible, else materialises.
         template<typename T, Layout L, typename EM, typename EV>
         LINALG_INLINE void gemv_impl(T alpha, const MatExpr<EM>& a_expr, const VecExpr<EV>& x_expr, T beta, T* y_ptr, size_t M, size_t N) {
             Vector<T> x_tmp;
@@ -207,9 +205,15 @@ namespace linalg {
         };
     };
 
-    // y = alpha * A * x + beta * y. Public interface output: Vector<T>
     template<typename T, Layout L = Layout::RowMajor, typename EM, typename EV>
-    LINALG_INLINE void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta, Vector<T>& y) {
+    LINALG_INLINE
+    /// @brief General matrix-vector multiplication.
+    /// @param alpha Scaling factor (that of `A * x`).
+    /// @param A Matrix operand.
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Vector to be updated (via `y = alpha * A * x + beta * y`).
+    void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta, Vector<T>& y) {
         const size_t M = A.self().rows();
         const size_t N = A.self().cols();
         BOUNDS_CHECK(M == y.size() && N == x.self().size());
@@ -217,14 +221,14 @@ namespace linalg {
         detail::gemv_impl<T, L>(alpha, A, x, beta, y.data(), M, N);
     };
     
-    // Public interface output: VectorView<T,true>
+    // Public interface output: VectorView<T,true>.
     template<typename T, Layout L = Layout::RowMajor, typename EM, typename EV>
     LINALG_INLINE void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta,  VectorView<T, true>& y) {
         const size_t M = A.self().rows();
         const size_t N = A.self().cols();
         BOUNDS_CHECK(M == y.size() && N == x.self().size() && y.stride() == 1);
         if (M == 0 || N == 0) return;
-        // VectorView with unit stride: data() gives a contiguous T*
+        // VectorView with unit stride: data() gives a contiguous T*.
         detail::gemv_impl<T, L>(alpha, A, x, beta, const_cast<T*>(y.data()), M, N);
     };
 
@@ -251,9 +255,15 @@ namespace linalg {
         };
     };
 
-    // General Rank-1 update: A = A + alpha * x * y^T (vector treated as a column)
     template<typename T, Layout L, typename EX, typename EY>
-    LINALG_INLINE void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
+    LINALG_INLINE
+    /// @brief General rank-1 update.
+    /// @param alpha Scaling factor (that of product).
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Vector to be transposed (assumed column).
+    /// @param A Matrix to be updated (via `A = A + alpha * x * y^T `).    
+    void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
         const size_t M = A.rows(), N = A.cols();
         BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
         if (M == 0 || N == 0) return;
@@ -269,9 +279,15 @@ namespace linalg {
         detail::ger_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
     };
 
-    // General Rank-1 Conjugated update: A = A + alpha * x * conj(y)^T (in-place conjugation)
     template<typename T, Layout L, typename EX, typename EY>
-    LINALG_INLINE void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
+    LINALG_INLINE 
+    /// @brief General rank-1 conjugated update.
+    /// @param alpha Scaling factor (that of product).
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Vector to be transposed and conjugated (assumed column).
+    /// @param A Matrix to be updated (via `A = A + alpha * x * y^H `).
+    void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, Matrix<T, L>& A) {
         const size_t M = A.rows(), N = A.cols();
         BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
         if (M == 0 || N == 0) return;
@@ -287,10 +303,12 @@ namespace linalg {
         detail::gerc_impl<T, L>(alpha, x, y, A.data(), A.stride(), M, N);
     };
 
-    // TRiangular SolVe: A * x = b, with result stored in x. Parameters follow BLAS convention
-    // uplo: 'U'/'L' (upper/lower triangle of A)
-    // diag: 'U'/'N' (unit/non-unit diagonal)
-    // x: Vector<T>& (in: rhs b, out: solution)
+    /// @brief In-place triangular solution of `A * x = b`.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param diag Unit/non-unit diagonal indicator.
+    /// @param A_expr Left-hand side matrix.
+    /// @param x RHS vector (overwritten by the solution).
     template<typename T, typename EM>
     void trsv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
         const auto& A = A_expr.self();
@@ -347,7 +365,7 @@ namespace linalg {
 
     namespace detail {
         namespace kernels::trmv {
-            // notrans, upper: tp[i] = SUM{j>=i} A[i,j] * x[j]
+            // notrans, upper: tp[i] = SUM{j>=i} A[i,j] * x[j].
             template<typename T, Layout L, bool Unit>
             LINALG_INLINE void trmv_notrans_upper(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
                 parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
@@ -359,9 +377,9 @@ namespace linalg {
                             LINALG_VECTORIZE
                             for (size_t j = i + 1; j < N; ++j) sum += row[j] * xp[j];
                         } else {
-                            // ColMajor: A[i,j] = Ap[j*lda + i]
+                            // ColMajor: A[i,j] = Ap[j*lda + i].
                             sum = Unit ? xp[i] : Ap[i * lda + i] * xp[i];
-                            // j > i: each column j is non-contiguous in i but x[j] is scalar
+                            // j > i: each column j is non-contiguous in i but x[j] is scalar.
                             for (size_t j = i + 1; j < N; ++j) sum += Ap[j * lda + i] * xp[j];
                         };
                         tp[i] = sum;
@@ -369,7 +387,7 @@ namespace linalg {
                 });
             };
  
-            // notrans, lower: tp[i] = SUM{j<=i} A[i,j] * x[j]
+            // notrans, lower: tp[i] = SUM{j<=i} A[i,j] * x[j].
             template<typename T, Layout L, bool Unit>
             LINALG_INLINE void trmv_notrans_lower(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
                 parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
@@ -436,8 +454,7 @@ namespace linalg {
                 };
             };
  
-            // trans (or conj-trans), lower: scatter over rows of A^T that are columns
-            // of lower-triangular A, i.e. for each j update tp[j..N-1].
+            // trans (or conj-trans), lower: scatter over rows of A^T that are columns of lower-triangular A, i.e. for each j update tp[j...N-1].
             template<typename T, Layout L, bool Unit, bool DoConj>
             LINALG_INLINE void trmv_trans_lower(const T* LINALG_RESTRICT Ap, size_t lda, const T* LINALG_RESTRICT xp, T* LINALG_RESTRICT tp, size_t N) {
                 auto& pool = ThreadPool::instance();
@@ -534,10 +551,10 @@ namespace linalg {
             // Encode runtime bools as std::integral_constant so template args are resolved at compile time inside each kernel.
             if (!do_trans) {
                 if (unit) dispatch_notrans(std::true_type{});
-                else      dispatch_notrans(std::false_type{});
+                else dispatch_notrans(std::false_type{});
             } else {
-                if (unit && do_conj) dispatch_trans(std::true_type{},  std::true_type{});
-                if (unit && !do_conj) dispatch_trans(std::true_type{},  std::false_type{});
+                if (unit && do_conj) dispatch_trans(std::true_type{}, std::true_type{});
+                if (unit && !do_conj) dispatch_trans(std::true_type{}, std::false_type{});
                 if (!unit && do_conj) dispatch_trans(std::false_type{}, std::true_type{});
                 if (!unit && !do_conj) dispatch_trans(std::false_type{}, std::false_type{});
             };
@@ -562,20 +579,20 @@ namespace linalg {
                 if (N < PARALLEL_THRESHOLD_COMPUTE) {
                     if (upper) {
                         for (size_t i = 0; i < N; ++i) {
-                            // Diagonal (real part for Hermitian)
+                            // Diagonal (real part for Hermitian).
                             const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
                             T sum_i = aii * xp[i];
                             for (size_t j = i + 1; j < N; ++j) {
                                 const T aij = Aload(i, j);
                                 sum_i += aij * xp[j];
-                                // Symmetric contribution: A[j,i] = conj(A[i,j]) for Hermitian
+                                // Symmetric contribution: A[j,i] = conj(A[i,j]) for Hermitian.
                                 if constexpr (DoConj) yp[j] += alpha * conj(aij) * xp[i];
                                 else yp[j] += alpha * aij * xp[i];
                             };
                             yp[i] += alpha * sum_i;
                         };
                     } else {
-                        // Lower storage
+                        // Lower storage.
                         for (size_t i = 0; i < N; ++i) {
                             const T aii = DoConj ? static_cast<T>(std::real(Aload(i, i))) : Aload(i, i);
                             T sum_i = aii * xp[i];
@@ -590,11 +607,11 @@ namespace linalg {
                     };
                     return;
                 };
-                // Parallel path
+                // Parallel path:
                 auto& pool = ThreadPool::instance();
                 const size_t num_threads = std::min(pool.thread_count(), (N + PARALLEL_THRESHOLD_COMPUTE - 1) / PARALLEL_THRESHOLD_COMPUTE);
-                // row_acc[i] = direct dot-product contribution for row i
-                // scatter[t][j] = symmetric contributions accumulated by thread t
+                // row_acc[i] = direct dot-product contribution for row i.
+                // scatter[t][j] = symmetric contributions accumulated by thread t.
                 using AlignedVec = std::vector<T, AlignedAllocator<T>>;
                 std::vector<AlignedVec> row_acc(num_threads, AlignedVec(N, T(0)));
                 std::vector<AlignedVec> scatter(num_threads, AlignedVec(N, T(0)));
@@ -655,9 +672,15 @@ namespace linalg {
         };
     };
 
-    // TRiangular Matrix-Vector product: x = op(A) * x
     template<typename T, typename EM>
-    LINALG_INLINE void trmv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
+    LINALG_INLINE 
+    /// @brief Triangular matrix-vector product.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param diag Unit/non-unit diagonal indicator.
+    /// @param A_expr Matrix operand.
+    /// @param x Vector to be updated (via `x = op(A) * x`).
+    void trmv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, Vector<T>& x) {
         const auto& A = A_expr.self();
         const size_t N = A.rows();
         BOUNDS_CHECK(A.cols() == N && x.size() == N);
@@ -674,7 +697,13 @@ namespace linalg {
         detail::trmv_impl(uplo, trans, diag, A_expr, const_cast<T*>(x.data()), N);
     };
 
-    //SYmmetric Matrix-Vector product: y = alpha * A * x + beta * y
+    /// @brief Symmetric matrix-vector product. 
+    /// @param uplo Upper/lower triangle of A.
+    /// @param alpha Scaling factor (that of `A * x`).
+    /// @param A_expr Matrix.
+    /// @param x_expr independent vector.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y vector to be updated (via `y = alpha * A * x + beta * y`).
     template<typename T, typename EM, typename EV>
     void symv(char uplo, T alpha, const MatExpr<EM>& A_expr, const VecExpr<EV>& x_expr, T beta, Vector<T>& y) {
         const auto& A = A_expr.self();
@@ -705,7 +734,13 @@ namespace linalg {
             detail::kernels::symv_hemv_kernel<T, Layout::ColMajor, false>(alpha, Ap, lda, xp, beta, yp, N, upper);
     };
 
-    // HErmitian Matrix-Vector product:  y = alpha * A * x + beta * y, where A is Hermitian Matrix
+    /// @brief Hermitian matrix-vector product.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param alpha Scaling factor (that of `A * x`).
+    /// @param A_expr Hermitian matrix.
+    /// @param x_expr independent vector.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y vector to be updated (via `y = alpha * A * x + beta * y`). 
     template<typename T, typename EM, typename EV>
     void hemv(char uplo, T alpha, const MatExpr<EM>& A_expr, const VecExpr<EV>& x_expr, T beta, Vector<T>& y) {
         const auto& A = A_expr.self();
