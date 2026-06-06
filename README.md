@@ -9,6 +9,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - [Expression templates](#expression-infrastructure)
 - [Operations](#operationsutility-functions)
 - [BLAS](#blas)
+- [Matrix decompositions](#decompositions)
 - [Quick start](#quick-start)
 ---
 ## Overview
@@ -188,6 +189,64 @@ The existing routines follow standard 3-level convention:
 
 *Note:* for in-depth coverage of BLAS cf. the [dedicated reference](reference/BLAS.md).
 
+---
+## Decompositions
+The library provides common matrix factorisations, naturally integrated with the expression template and BLAS machinery.
+
+### LU decomposition
+Blocked LU with partial pivoting. For original matrix $A$ finds $P$, $L$, $U$ such that: $PA = LU$. *Note:* for detailed account of the algorithm cf. the [reference](reference/LU.md).
+
+The `lu()` function returns `P`, `L`, `U`, the packed representation, and the pivot vector:
+```cpp
+auto res = lu(A); // LUResult<T, L> - dedicated structure.
+ 
+res.P // Permutation matrix.
+res.L // Unit lower triangular factor.
+res.U // Upper triangular factor.
+res.packed // In-place storage (strict-L below diagonal, U on/above).
+res.piv // Pivot indices.
+ 
+// Connected functions:
+Vector<double> b;
+lu_solve(res, b); // Solve A * x = b  (single RHS, in-place)
+
+Matrix<double> B;
+lu_solve(res, B); // Solve A * X = B  (multiple RHS, in-place)
+
+double d = lu_det(res); // Determinant.
+
+auto Ainv = lu_inverse(res); // Inverse.
+```
+
+
+### QR factorisation
+Householder QR with optional column pivoting. Uses a blocked compact-WY update for large matrices. Finds matrices satisfying: $AP = QR$ (note the column permutation - opposite convention from LU).
+
+`qr()` master function accepts a range of `QRMode` values:
+| Value | Q shape | Use case |
+|---|---|---|
+| `QRMode::Reduced` | m * min(m,n) | Default; economy decomposition. |
+| `QRMode::Complete` | m * m | Full orthonormal basis. |
+| `QRMode::R` |  | R only; fastest. |
+```cpp
+// Modes:
+auto res = qr(A); // Reduced QR (default).
+auto res = qr_complete(A); // Full Q.
+auto res = qr_r(A); // R only - Q not formed.
+auto res = qr_pivoted(A); // Column-pivoted.
+auto res = qr_pivoted(A, tol); // With explicit rank tolerance set.
+ 
+// Fine-grained control, returns QRResult<T, L>.
+auto res = qr(A, QRMode::Reduced, /*pivoting=*/true, /*tol=*/-1.0);
+ 
+res.Q // Orthonormal factor (m * min(m,n) for Reduced).
+res.R // Upper triangular factor.
+res.P // Permutation matrix (for pivoted QR: A * P = Q * R).
+res.piv // Pivot indices (for pivoted QR).
+res.rank  // Estimated numerical rank (pivoted only; -1 otherwise).
+res.pivoted // true if pivoting was enabled.
+```
+*Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference].
 
 ---
 ## Quick start
