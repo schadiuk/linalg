@@ -1,5 +1,9 @@
 # BLAS Reference
 This document explores every BLAS-level operation in the `linalg` library: the mathematical definition of each routine, a full account of the internal algorithm and engineering decisions behind it.
+> **Source files:** `level1.hpp`, `level2.hpp`, `level3.hpp`.
+
+> **Dependencies:** `matrix.hpp`, `vector.hpp`.
+
 ---
 ## Table of contents
 - [Parallelisation model](#parallelisation-model)
@@ -7,6 +11,7 @@ This document explores every BLAS-level operation in the `linalg` library: the m
 - [BLAS-1](#level-1-vector-operations)
 - [BLAS-2](#level-2-matrix-vector-operations)
 - [BLAS-3](#level-3-matrix-matrix-oprations)
+- [Quick reference](#quick-reference)
 ---
 ## Parallelisation model
 As `linalg` actively uses threading capabilities of C++, understanding the library's parallelisation infrastructure is a prerequisite for all further reasoning about the behaviour and design of kernels.
@@ -672,7 +677,7 @@ for (size_t i = rs; i < re; ++i) {
 };
 ```
 
-After packing, the outer-product computation uses a blocked tiled loop over $i$-tiles of size $b_s = 64$, parallelised at tile level. Within each tile pair $(t_i, t_j)$, an 8-wide unrolled dot product computes the $(i,j)$ entry of $op(A)\,op(A)^{T/H}$ (cf. the implementation [here](#dot-real-dot-product)):
+After packing, the outer-product computation uses a blocked tiled loop over $i$-tiles of size $b_s = 64$, parallelised at tile level. Within each tile pair $(t_i, t_j)$, an 8-wide unrolled dot product computes the $(i,j)$ entry of $op(A)\,op(A)^{T/H}$ (cf. the algorithm [here](#dot-real-dot-product)):
 ```cpp
 T s0{}, s1{}, s2{}, s3{}, s4{}, s5{}, s6{}, s7{};
 const size_t K8 = (K / 8) * 8;
@@ -699,3 +704,37 @@ const T s = ((s0+s1)+(s2+s3)) + ((s4+s5)+(s6+s7));
 The 8-accumulator structure gives 8 independent FMA chains. The pairwise tree reduction $((s_0{+}s_1)+(s_2{+}s_3))+((s_4{+}s_5)+(s_6{+}s_7))$ minimises floating-point rounding error by keeping the binary tree balanced. Parallelism is over $i$-tiles: each tile is assigned to a thread, which iterates over all $j$-tiles in the relevant triangle half, accumulating the full dot product for each $(i,j)$ entry before writing. This ensures no two threads write to the same output element, requiring no reduction on $C$.
  
 For `herk`, the `conjugate` branch activates `conj(aj[k])` in the inner product, computing $a_i[k] \cdot \overline{a_j[k]}$ - the $(i,j)$ entry of $op(A)\,op(A)^H$. For real types `conj` is the identity and the compiler emits the same code as the `conjugate = false` path.
+
+---
+## Quick reference
+- ### `trans` semantics
+
+| `trans` | `trsv` / `trsm` | `trmv` | `syrk` | `herk` |
+|---|---|---|---|---|
+| `'N'` | $A$ | $A$ | $op(A) = A$ | $op(A) = A$ |
+| `'T'` | $A^\top$ (gather) | $A^\top$ (index fix) | $op(A) = A^\top$ | $op(A) = A^\top$ |
+| `'C'` | $A^H$ (gather) | $A^H$ (index fix) |  | $op(A) = A^H$ |
+ 
+[`gemv`](#gemv-general-matrix-vector-multiply) has no `trans` parameter. Passing `transpose(A)` or `hermitian(A)` triggers materialisation of the transposed view; for repeated use it is strongly recommended to materialise once explicitly before the loop.
+ 
+- ### `uplo` semantics
+| `uplo` | Triangle read/written | Symmetric access | Hermitian access |
+|---|---|---|---|
+| `'U'` | $i \le j$ | $A[j,i]$ | $\overline{A[j,i]}$ |
+| `'L'` | $i \ge j$ | $A[j,i]$ | $\overline{A[j,i]}$ |
+ 
+- ### Output requirements
+| Routine | Output | Notes |
+|---|---|---|
+| `axpy`, `axpby` | `Vector<T>` or unit-stride `VectorView<T,true>`. | Accumulates or overwrites. |
+| `scal` | `Vector<T>`, `Matrix<T,L>`, or mutable views. | In-place. |
+| `gemv` | `Vector<T>` or unit-stride `VectorView<T,true>`. | Pre-sized to $M$. |
+| `trsv` | `Vector<T>` | Overwritten in-place: $b$ on entry, $x$ on exit. |
+| `trmv` | `Vector<T>` or unit-stride `VectorView<T,true>`. | In-place; uses internal temporary. |
+| `ger`, `gerc` | `Matrix<T,L>` or mutable `MatrixView`.| Accumulates. |
+| `symv`, `hemv` | `Vector<T>`. | Accumulates. |
+| `gemm` | `Matrix<T,L>`. | Pre-allocated $M \times N$. |
+| `trsm` | `Matrix<T,L>` or mutable `MatrixView`. | Overwritten in-place: $B$ on entry, $X$ on exit. |
+| `syrk`, `herk` | `Matrix<T,L>` or mutable `MatrixView`. | Square $N \times N$ required. |
+
+---
