@@ -5,7 +5,7 @@
 
 namespace linalg {
     namespace detail {
-        // Real type traits
+        // Real type traits.
 		template<typename T> struct real_type_impl { using type = T; };
         template<typename T> struct real_type_impl<std::complex<T>> { using type = T; };
         template<typename T>
@@ -32,7 +32,6 @@ namespace linalg {
                         for (size_t j = j0; j < j1; ++j) c_row[j] += a_ik * b_row[j];
                     };
                     */
-                    
                     for (size_t k = k0; k < k1; ++k) {
                         const T a_ik  = alpha * a_row[k];
                         const T* b_row = B + k * ldb;
@@ -72,9 +71,7 @@ namespace linalg {
                         LINALG_VECTORIZE
                         for (size_t i = i0; i < i1; ++i) c_col[i] += a_col[i] * b_kj;
                         */
-
-                        // Auto-vectorizer does not pay off well, with 8-wide unroll outperforming for every dtype.
-                        
+                        // Auto-vectorizer rarely pays off well, with 8-wide unroll outperforming for every dtype.
                         const T b_kj  = alpha * b_col[k];
                         const T* a_col = A + k * lda;
                         size_t i = i0;
@@ -132,7 +129,7 @@ namespace linalg {
             for (auto& f : futures) f.get();
         };
 
-        // Parallelised materialisation
+        //Parallelised materialisation helper.
         template<typename T, Layout L, typename E>
         Matrix<T, L> materialise(const MatExpr<E>& e) {
             const auto& src = e.self();
@@ -173,9 +170,15 @@ namespace linalg {
 
     
 
-    // GEneral Matrix Multiplication: C = alpha * A * B + beta * C
     template<typename T, Layout L, typename EA, typename EB>
-    LINALG_INLINE void gemm(T alpha, const MatExpr<EA>& A_expr, const MatExpr<EB>& B_expr, T beta, Matrix<T, L>& C) {
+    LINALG_INLINE 
+    /// @brief General matrix multiplication.
+    /// @param alpha Scaling factor (that of `A * B` product).
+    /// @param A_expr Left matrix operand.
+    /// @param B_expr Right matrix operand.
+    /// @param beta Scaling factor of `C`.
+    /// @param C Matrix to be updated (via `C = alpha * A * B + beta * C`).
+    void gemm(T alpha, const MatExpr<EA>& A_expr, const MatExpr<EB>& B_expr, T beta, Matrix<T, L>& C) {
         const size_t M = A_expr.self().rows();
         const size_t N = B_expr.self().cols();
         const size_t K = A_expr.self().cols();
@@ -190,10 +193,10 @@ namespace linalg {
             });
         };
         if (alpha == T(0)) return;
-        // Fast path: extract pointer
+        // Fast path: extract pointer.
         auto a_info = detail::raw_mat_info<T>(A_expr);
         auto b_info = detail::raw_mat_info<T>(B_expr);
-        // Materialise only the operand(s) that could not yield a raw pointer
+        // Materialise only the operand(s) that could not yield a raw pointer.
         Matrix<T, L> A_tmp, B_tmp;
         if (!a_info) A_tmp = detail::materialise<T, L>(A_expr);
         if (!b_info) B_tmp = detail::materialise<T, L>(B_expr);
@@ -205,7 +208,7 @@ namespace linalg {
     };
 
     namespace detail {
-        // In-place triangular solve on a contiguous vector
+        // In-place triangular solve on a contiguous vector.
         template<typename T, typename AM>
         LINALG_INLINE void trsm_col_solve(char uplo, char trans, char diag, const AM& A, T* xp, size_t N) {
             const bool upper = (uplo  == 'U' || uplo  == 'u');
@@ -234,9 +237,9 @@ namespace linalg {
                     }
                 }
             } else {
-                // A^T or A^H: access A(j,i) instead of A(i,j), flips triangle direction
+                // A^T or A^H: access A(j,i) instead of A(i,j), flips triangle direction.
                 if (upper) {
-                    // Upper^T acts as lower -> forward substitution
+                    // Upper^T acts as lower -> forward substitution.
                     for (size_t i = 0; i < N; ++i) {
                         T s = xp[i];
                         LINALG_VECTORIZE
@@ -245,7 +248,7 @@ namespace linalg {
                         xp[i] = unit ? s : s / d;
                     }
                 } else {
-                    // Lower^T acts as upper -> backward substitution
+                    // Lower^T acts as upper -> backward substitution.
                     for (size_t ii = 0; ii < N; ++ii) {
                         const size_t i = N - 1 - ii;
                         T s = xp[i];
@@ -264,7 +267,7 @@ namespace linalg {
         template<typename T, Layout L, typename AM>
         void trsm_impl(char side, char uplo, char trans, char diag, T alpha,  const AM& A, T* B_ptr, size_t ldb, size_t M, size_t N_rhs) {
             if (M == 0 || N_rhs == 0) return;
-            // Scale B by alpha (beta=0 fills unconditionally)
+            // Scale B by alpha (beta=0 fills unconditionally).
             if (alpha == T(0)) {
                 if constexpr (L == Layout::RowMajor)
                     parallel_for(M, PARALLEL_THRESHOLD_SIMPLE, [B_ptr, ldb, N_rhs](size_t rs, size_t re) {
@@ -300,31 +303,6 @@ namespace linalg {
             const bool left = (side == 'L' || side == 'l');
             auto& pool = ThreadPool::instance();
             if (left) {
-                /*
-                // Each column of B is an independent trsv
-                const size_t num_threads = std::min(pool.thread_count(), N_rhs);
-                std::vector<std::future<void>> futures; 
-                futures.reserve(num_threads);
-                for (size_t t = 0; t < num_threads; ++t) {
-                    futures.push_back(pool.enqueue([=, &A]() {
-                        Vector<T> buf(M);
-                        T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
-                        for (size_t j = t; j < N_rhs; j += num_threads) {
-                            if constexpr (L == Layout::RowMajor) {
-                                // Gather column j from row-major B into buf
-                                for (size_t i = 0; i < M; ++i) bp[i] = B_ptr[i*ldb + j];
-                                trsm_col_solve(uplo, trans, diag, A, bp, M);
-                                // Scatter back
-                                for (size_t i = 0; i < M; ++i) B_ptr[i*ldb + j] = bp[i];
-                            } else {
-                                // Column-major: column j is already contiguous
-                                trsm_col_solve(uplo, trans, diag, A, B_ptr + j*ldb, M);
-                            };
-                        };
-                    }));
-                };
-                for (auto& f : futures) f.get();
-                */
                 const size_t n_blocks = (N_rhs + TRSM_RHS_BLOCK - 1) / TRSM_RHS_BLOCK;
                 const size_t num_threads = std::min(pool.thread_count(), n_blocks);
                 std::vector<std::future<void>> futures;
@@ -357,7 +335,6 @@ namespace linalg {
                                 };
                             } else {
                                 // ColMajor: columns j0...j1-1 are already contiguous segments; use a look-ahead panel update so A is traversed once per block.
-
                                 const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
                                 const bool upper = (uplo == 'U' || uplo == 'u');
                                 // Determine whether the look-ahead sweep goes forward (k=0...M) or backward (k=M-1...0).  Forward sweep: lower+notrans or upper+trans.
@@ -371,19 +348,19 @@ namespace linalg {
                                         T* LINALG_RESTRICT dst = bp + jj * M;
                                         LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) dst[i] = src[i];
                                     };
-                                    constexpr size_t kb = L2_BLOCK / 2; // reuse blocked size constant
+                                    constexpr size_t kb = L2_BLOCK / 2; // Reuse blocked size constant.
                                     if (forward) {
                                         for (size_t k = 0; k < M; k += kb) {
                                             const size_t ke = std::min(k + kb, M);
-                                            const size_t ks = ke - k;  // actual panel height
-                                            // Solve the panel rows: bp[k:ke, 0:nb]
+                                            const size_t ks = ke - k;  // Actual panel height.
+                                            // Solve the panel rows: bp[k:ke, 0:nb].
                                             for (size_t jj = 0; jj < nb; ++jj)
                                                 trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
-                                            // Look-ahead update
+                                            // Look-ahead update.
                                             if (ke < M) {
-                                                // Build a tight sub-matrix for A[ke:M, k:ke]
+                                                // Build a tight sub-matrix for A[ke:M, k:ke].
                                                 const size_t rows_rem = M - ke;
-                                                // Extract A panel into a temporary col-major buffer
+                                                // Extract A panel into a temporary col-major buffer.
                                                 AlignedBuf a_panel(rows_rem * ks);
                                                 T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
                                                 for (size_t kk = 0; kk < ks; ++kk) {
@@ -405,10 +382,10 @@ namespace linalg {
                                             const size_t ke = k;
                                             k = (ke > kb) ? ke - kb : 0;
                                             const size_t ks = ke - k;
-                                            // Solve bp[k:ke, 0:nb]
+                                            // Solve bp[k:ke, 0:nb].
                                             for (size_t jj = 0; jj < nb; ++jj)
                                                 trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
-                                            // Update bp[0:k, 0:nb] -= A[0:k, k:ke] * bp[k:ke, 0:nb]
+                                            // Update bp[0:k, 0:nb] -= A[0:k, k:ke] * bp[k:ke, 0:nb].
                                             if (k > 0) {
                                                 AlignedBuf a_panel(k * ks);
                                                 T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
@@ -418,21 +395,21 @@ namespace linalg {
                                                         ap[kk * k + ii] = static_cast<T>(A(ii, k + kk));
                                                 };
                                                 gemm_direct<T, Layout::ColMajor>(T(-1),
-                                                    ap, k, // A: k×ks col-major lda=k
-                                                    bp + k, M, // B: ks×nb col-major lda=M
-                                                    bp, M, // C: k×nb col-major lda=M
+                                                    ap, k, // A: k*ks col-major lda=k
+                                                    bp + k, M, // B: ks*nb col-major lda=M
+                                                    bp, M, // C: k*nb col-major lda=M
                                                     k, nb, ks);
                                             };
                                         };
                                     };
-                                    // Write back to B
+                                    // Write back to B.
                                     for (size_t jj = 0; jj < nb; ++jj) {
                                         T* dst = B_ptr + (j0 + jj) * ldb;
                                         const T* LINALG_RESTRICT src = bp + jj * M;
                                         LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) dst[i] = src[i];
                                     };
                                 } else {
-                                    // Small M or single column: simple column-by-column solve
+                                    // Small M or single column: simple column-by-column solve.
                                     for (size_t jj = 0; jj < nb; ++jj)
                                         trsm_col_solve(uplo, trans, diag, A, B_ptr + (j0 + jj) * ldb, M);
                                 };
@@ -457,7 +434,7 @@ namespace linalg {
                     const size_t i1 = i0 + chunk + (t < rem ? 1 : 0);
                     offset = i1;
                     futures.push_back(pool.enqueue([=, &A]() {
-                        // Reusable row buffer — allocated once per thread, not once per row.
+                        // Reusable row buffer - allocated once per thread, not once per row.
                         using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
                         AlignedBuf buf(N_rhs);
                         T* LINALG_RESTRICT bp = detail::assume_aligned<64>(buf.data());
@@ -468,7 +445,7 @@ namespace linalg {
                                 trsm_col_solve(uplo, trans_r, diag, A, rp, N_rhs);
                                 if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) rp[j] = conj(rp[j]); };
                             } else {
-                                // Gather row i (stride ldb) into contiguous buffer
+                                // Gather row i (stride ldb) into contiguous buffer.
                                 LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) bp[j] = B_ptr[j*ldb + i];
                                 if (conj_sides) { LINALG_VECTORIZE for (size_t j = 0; j < N_rhs; ++j) bp[j] = conj(bp[j]); };
                                 trsm_col_solve(uplo, trans_r, diag, A, bp, N_rhs);
@@ -483,8 +460,15 @@ namespace linalg {
         };
     };
 
-    // trsm: op(A) * X = alpha * B  (side='L')  or  X * op(A) = alpha * B  (side='R')
-    // A is square and triangular
+
+    /// @brief In-place triangular solution of `A * X = alpha * B`.
+    /// @param side Left/right multiplication (i.e. `op(A) * X` or `X * op(A)`)
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param diag Unit/non-unit diagonal indicator.
+    /// @param alpha Scaling factor of `B`.
+    /// @param A_expr LHS matrix.
+    /// @param B RHS matrix (overwritten by the solution).
     template<typename T, Layout L, typename EM>
     void trsm(char side, char uplo, char trans, char diag, T alpha, const MatExpr<EM>& A_expr, Matrix<T, L>& B) {
         const bool left = (side == 'L' || side == 'l');
@@ -502,7 +486,7 @@ namespace linalg {
     };
 
     namespace detail {
-        // Triangle beta-scaling with beta=0 unconiditional fill
+        // Triangle beta-scaling with beta=0 unconiditional fill.
         template<typename T, Layout L>
         LINALG_INLINE void scale_triangle(char uplo, T beta, T* LINALG_RESTRICT cp, size_t ldc, size_t N) {
             if (beta == T(1)) return;
@@ -519,7 +503,7 @@ namespace linalg {
                     };
                 });
             } else {
-                // ColMajor: iterate over columns; column j covers rows [j0, j1)
+                // ColMajor: iterate over columns; column j covers rows [j0, j1).
                 parallel_for(N, threshold, [cp, ldc, N, upper, beta](size_t cs, size_t ce) {
                     for (size_t j = cs; j < ce; ++j) {
                         const size_t i0 = upper ? 0 : j;
@@ -574,17 +558,17 @@ namespace linalg {
                 parallel_for(n_itiles, 1, [=, &A_buf](size_t tis, size_t tie) {
                     for (size_t ti = tis; ti < tie; ++ti) {
                         const size_t i0 = ti * bs, i1 = std::min(i0 + bs, N);
-                        // j-tile loop: only the triangle half
+                        // j-tile loop: only the triangle half:
                         for (size_t tj = upper ? ti : 0; tj < (upper ? n_itiles : ti + 1); ++tj) {
                             const size_t j0 = tj * bs, j1 = std::min(j0 + bs, N);
                             for (size_t i = i0; i < i1; ++i) {
                                 const T* LINALG_RESTRICT ai = Ab + i * K;
-                                // j starts at i (diagonal tile) or j0 (off-diagonal tile)
+                                // j starts at i (diagonal tile) or j0 (off-diagonal tile):
                                 const size_t jstart = (upper && ti == tj) ? i : j0;
                                 const size_t jend = (!upper && ti == tj) ? i + 1 : j1;
                                 for (size_t j = jstart; j < jend; ++j) {
                                     const T* LINALG_RESTRICT aj = Ab + j * K;
-                                    // 8-wide unrolled dot product with optional conjugation
+                                    // 8-wide unrolled dot product with optional conjugation.
                                     T s0{}, s1{}, s2{}, s3{}, s4{}, s5{}, s6{}, s7{};
                                     const size_t K8 = (K / 8) * 8;
                                     if (conjugate) {
@@ -641,7 +625,13 @@ namespace linalg {
         };
     };
 
-    // SYmmetric Rank-K update: C = alpha * op(A) * op(A)^T + beta * C
+    /// @brief Symmetric rank-k update.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param alpha Scaling factor (that of product).
+    /// @param A_expr Independent matrix operand.
+    /// @param beta Scaling factor of `C`.
+    /// @param C Matrix to be updated (via `C = alpha * op(A) * op(A)^T + beta * C`).
     template<typename T, Layout L, typename EA>
     void syrk(char uplo, char trans, T alpha, const MatExpr<EA>& A_expr, T beta, Matrix<T, L>& C) {
         const bool notrans = (trans == 'N' || trans == 'n');
@@ -657,8 +647,15 @@ namespace linalg {
         BOUNDS_CHECK(C.rows() == N && C.cols() == N);
         detail::syrk_impl<T, L>(uplo, trans, alpha, A_expr, beta, C.data(), C.stride(), N, false);
     };
-    
-    // HErmitian Rank-K update: C = alpha * op(A) * op(A)^H + beta * C
+ 
+    /// @brief Hermitian rank-k update.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param alpha Scaling factor (that of product).
+    /// @param A_expr Independent matrix operand.
+    /// @param beta Scaling factor of `C`.
+    /// @param C Matrix to be updated (via `C = alpha * op(A) * op(A)^H + beta * C`).
+    /// @note Both of the scaling factors are real.
     template<typename T, Layout L, typename EA>
     void herk(char uplo, char trans, detail::real_type_t<T> alpha, const MatExpr<EA>& A_expr, detail::real_type_t<T> beta,  Matrix<T, L>& C) {
         const bool notrans = (trans == 'N' || trans == 'n');

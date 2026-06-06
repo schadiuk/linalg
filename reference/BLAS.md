@@ -6,6 +6,7 @@ This document explores every BLAS-level operation in the `linalg` library: the m
 - [Conventions](#conventions)
 - [BLAS-1](#level-1-vector-operations)
 - [BLAS-2](#level-2-matrix-vector-operations)
+- [BLAS-3](#level-3-matrix-matrix-oprations)
 ---
 ## Parallelisation model
 As `linalg` actively uses threading capabilities of C++, understanding the library's parallelisation infrastructure is a prerequisite for all further reasoning about the behaviour and design of kernels.
@@ -396,6 +397,7 @@ trsv('U', 'C', 'N', expr(A), x); // Upper conjugate-transpose.
     * **Lower transposed — backward gather.** For each $i$ from $N{-}1$ down to $0$:
  
     $$x_i = \frac{x_i - \sum_{k > i} A_{ki} x_k}{A_{ii}}$$
+
 In both transposed cases the `do_conj` flag is checked only when forming the pre-computed local `aji` / `aki`, adding at most one branch per outer iteration with zero overhead in the inner loop.
 
 ---
@@ -515,7 +517,7 @@ hemv(uplo, alpha, expr(A), expr(x), beta, y); // y = alpha * A * x + beta * y, A
 
 Both routines are implemented via a single shared `symv_hemv_kernel<T, L, DoConj>` function. The `DoConj` template parameter selects between symmetric and Hermitian behaviour at compile time, completely eliminating the runtime conditional in the hot loop. The implementation also extends pointer extraction to the matrix operand: `raw_mat_info<T>` is attempted on `A`, and the layout obtained is forwarded to the kernel (which handles both `Layout::RowMajor` and `Layout::ColMajor` via the `Aload` lambda). This eliminates the unconditional RowMajor materialisation.
  
-**Two-vector sweep algorithm.** The key algorithm is processing of the stored triangle in a single pass that simultaneously updates *both* the direct and the symmetric scatter contributions. Each stored element $A_{ij}$ is touched exactly once, halving the number of cache-line loads compared to a two-pass implementation:
+**Two-vector sweep.** The key algorithm is processing of the stored triangle in a single pass that simultaneously updates *both* the direct and the symmetric scatter contributions. Each stored element $A_{ij}$ is touched exactly once, halving the number of cache-line loads compared to a two-pass implementation:
 ```cpp
 // Upper storage branch:
 for (size_t i = 0; i < N; ++i) {
@@ -553,3 +555,147 @@ parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [&](size_t rs, size_t re) {
 ```
 
 This is analogous to the private-accumulator reduction in `gemv_kernel_col`, with the addition of a separate `scatter` array to hold the off-diagonal symmetric contributions.
+
+---
+## Level 3: matrix-matrix oprations
+
+Level 3 routines perform $O(MNK)$ arithmetic with only $O(MN + NK + MK)$ data traffic. Arithmetic intensity scales as $O(\min(M,N,K))$, meaning that the routines become compute-bound for large dimensions. Cache blocking and parallelism strategy are the primary performance drivers.
+- [`gemm`](#gemm-general-matrix-matrix-product)
+- [`trsm`](#trsm-multiple-rhs-triangular-solve)
+- [`syrk` / `herk`](#syrk-and-herk-rank-k-updates)
+
+---
+### `gemm`: general matrix-matrix product
+```cpp
+// C = alpha * A * B + beta * C, A is M * K, B is K * N, C is M * N.
+gemm(alpha, expr(A), expr(B), beta, C);
+```
+ 
+**Operation:** $C \leftarrow \alpha AB + \beta C$.
+
+Before any multiply-add work the entire flat $C$ array is rescaled in a single vectorised `parallel_for` pass over $M \times N$ contiguous elements. For $\beta = 0$, `std::fill` is used to unconditionally zero $C$, avoiding a potential NaN propagation. Then `raw_mat_info<T>` is attempted on both $A$ and $B$. On failure, `detail::materialise<T, L>` creates a fresh `Matrix<T, L>` via a parallel layout-aware copy.
+
+**Problem dispatch:**
+```cpp
+if (M * N * K < PARALLEL_THRESHOLD_COMPUTE * 10)
+    gemm_microkernel_{row|col}(0, M, 0, N, 0, K); // Direct.
+else
+    gemm_blocked<T, L>(...); // Tiled.
+```
+ 
+Below approximately 41000 total FMAs, the matrices fit in L1/L2 cache and blocking provides no cache-reuse benefit, while tile bookkeeping adds extra cost.
+
+**Microkernels**
+
+The auto-vectorised version (present as commented-out in the source code) was benchmarked and found slower for all scalar types. The explicit 8-wide unroll avoids compiler conservatism at parametric tile boundaries:
+ 
+- **Row-major microkernel** (outer-product form, $i \to k \to j$):
+```cpp
+for (size_t i = i0; i < i1; ++i) {
+    const T* LINALG_RESTRICT a_row = A + i * lda;
+    T* LINALG_RESTRICT c_row = C + i * ldc;
+    for (size_t k = k0; k < k1; ++k) {
+        const T a_ik = alpha * a_row[k]; // Broadcast scalar.
+        const T* b_row = B + k * ldb;
+        size_t j = j0;
+        for (; j + 8 <= j1; j += 8) {
+            c_row[j] += a_ik * b_row[j];
+            c_row[j+1] += a_ik * b_row[j+1];
+            // etc. through j+7.
+        };
+        for (; j < j1; ++j) c_row[j] += a_ik * b_row[j];
+    };
+};
+```
+
+For each $(i, k)$ pair, `a_ik` is a broadcast scalar and `b_row` is a contiguous row - optimal access for RowMajor $B$. The 8 independent `c_row[j..j+7] +=` statements form 8 independent FMA chains that the out-of-order scheduler overlaps. On AVX2 (256-bit, 4 doubles), the compiler groups these into two 4-wide SIMD FMAs, saturating both FP execution ports.
+ 
+- **Column-major microkernel** (dual structure, $j \to k \to i$): hoists `b_kj = alpha * b_col[k]` per $(j, k)$ pair, then performs an 8-wide unroll over $i$ into a contiguous column of $C$.
+
+**Blocked algorithm**
+
+The blocked path uses tile size $b_s = L1\_\text{BLOCK} \times 2 = 64$. A $64 \times 64$ double tile is $64 \times 64 \times 8 = 32\,\text{KB}$, fitting in typical L1d cache. The $(i,j)$ tile grid is linearised into $\lceil M/b_s \rceil \times \lceil N/b_s \rceil$ tiles and distributed round-robin across threads. Each thread runs the full $k$-loop serially for each of its $(i,j)$ tiles, keeping the $C$-tile resident in register/L1 during accumulation with no inter-thread reduction on $C$.
+
+---
+### `trsm`: multiple RHS triangular solve
+```cpp
+trsm('L', 'U', 'N', 'N', alpha, expr(A), B); // op(A) * X = alpha * B.
+trsm('R', 'L', 'T', 'N', alpha, expr(A), B); // X * op(A) = alpha * B.
+```
+
+**Operation.** Overwrite $B$ with $X$ satisfying $op(A)\,X = \alpha B$ (left) or $X\,op(A) = \alpha B$ (right).
+
+$B$ is prescaled in-place via a layout-aware parallel loop before any solve. For row-major $B$: parallel over rows with a vectorised column scan; for column-major $B$: parallel over columns with a vectorised row scan, ensuring the inner loop always accesses memory contiguously.
+ 
+**Left solve.** Each column $j$ of matrix $B$ satisfies the independent system $op(A)\,x_j = b_j$. Columns are distributed round-robin across threads. For row-major $B$, column $j$ is strided; each thread gathers it into a contiguous buffer, calls `trsm_col_solve`, and scatters the solution back. For column-major $B$, column $j$ is contiguous and the solve operates in-place. `trsm_col_solve` implements the same backward/forward substitution with gather loops as `trsv`, covering all four `(uplo, trans)` combinations.
+ 
+**Right solve:** $X\,op(A) = B$ is equivalent to $op(A)^\top X^\top = B^\top$. This is solved row-by-row: each row of $B$ is an independent right-hand side for the transposed system, with `trans` flipped (`'N'` to `'T'`). For the conjugate-transpose case (`trans = 'C'`), each row is conjugated before and after the solve via a vectorised in-place pass.
+
+---
+### `syrk` and `herk`: rank-k updates
+```cpp
+syrk(uplo, trans, alpha, expr(A), beta, C);  // C = alpha * op(A) * op(A)^T + beta * C
+herk(uplo, trans, alpha, expr(A), beta, C);  // C = alpha * op(A) * op(A)^H + beta * C
+```
+ 
+**Operations.** $C \leftarrow \alpha \cdot op(A)\,op(A)^\top + \beta C$ and $C \leftarrow \alpha \cdot op(A)\,op(A)^H + \beta C$, where $C$ is $N \times N$ (Hermitian-)symmetric and only the triangle specified by `uplo` is written.
+ 
+`herk` is a thin wrapper over `syrk_impl` with `conjugate = true` and the real `alpha`/`beta` widened to `T`. Both routines share `syrk_core`.
+ 
+**Why prefer `syrk` over `gemm(A, transpose(A))`-like calls?** `gemm` writes all $N^2$ elements of $C$ and materialises the transpose. `syrk` writes only $N(N+1)/2 \approx N^2/2$ elements, touches each stored element once, and leaves the unreferenced triangle completely unchanged - an important invariant for downstream routines such as Cholesky factorisation.
+
+Only the referenced triangle is prescaled. For $\beta = 0$, `std::fill` is used on each relevant row segment (RowMajor) or the scalar path visits individual elements (ColMajor). The unreferenced triangle is not touched.
+ 
+Rather than computing $A[i,k]$ on demand from the physical layout during the inner product, `syrk_core` first packs $A$ into a row-major buffer:
+ 
+$$\text{Ab}[i \cdot K + k] = \text{logical\_}A(i, k)$$
+ 
+This normalises all four `(Layout, notrans)` combinations into a single memory access pattern for the inner product. The packing is parallelised and vectorised:
+```cpp
+for (size_t i = rs; i < re; ++i) {
+    T* LINALG_RESTRICT dst = Ab + i * K;
+    if constexpr (L == Layout::RowMajor) {
+        if (notrans) {
+            const T* src = ap + i * lda;
+            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+        } else {
+            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+        };
+    } else {
+        if (notrans) {
+            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+        } else {
+            const T* src = ap + i * lda;
+            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+        };
+    };
+};
+```
+
+After packing, the outer-product computation uses a blocked tiled loop over $i$-tiles of size $b_s = 64$, parallelised at tile level. Within each tile pair $(t_i, t_j)$, an 8-wide unrolled dot product computes the $(i,j)$ entry of $op(A)\,op(A)^{T/H}$ (cf. the implementation [here](#dot-real-dot-product)):
+```cpp
+T s0{}, s1{}, s2{}, s3{}, s4{}, s5{}, s6{}, s7{};
+const size_t K8 = (K / 8) * 8;
+if (conjugate) {
+    LINALG_VECTORIZE
+    for (size_t k = 0; k < K8; k += 8) {
+        s0 += ai[k ] * conj(aj[k]);
+        s1 += ai[k+1] * conj(aj[k+1]);
+        // etc. through s7.
+    };
+    for (size_t k = K8; k < K; ++k) s0 += ai[k] * conj(aj[k]);
+} else {
+    LINALG_VECTORIZE
+    for (size_t k = 0; k < K8; k += 8) {
+        s0 += ai[k] * aj[k];
+        s1 += ai[k+1] * aj[k+1];
+        // etc. through s7.
+    };
+    for (size_t k = K8; k < K; ++k) s0 += ai[k] * aj[k];
+};
+const T s = ((s0+s1)+(s2+s3)) + ((s4+s5)+(s6+s7));
+```
+
+The 8-accumulator structure gives 8 independent FMA chains. The pairwise tree reduction $((s_0{+}s_1)+(s_2{+}s_3))+((s_4{+}s_5)+(s_6{+}s_7))$ minimises floating-point rounding error by keeping the binary tree balanced. Parallelism is over $i$-tiles: each tile is assigned to a thread, which iterates over all $j$-tiles in the relevant triangle half, accumulating the full dot product for each $(i,j)$ entry before writing. This ensures no two threads write to the same output element, requiring no reduction on $C$.
+ 
+For `herk`, the `conjugate` branch activates `conj(aj[k])` in the inner product, computing $a_i[k] \cdot \overline{a_j[k]}$ - the $(i,j)$ entry of $op(A)\,op(A)^H$. For real types `conj` is the identity and the compiler emits the same code as the `conjugate = false` path.
