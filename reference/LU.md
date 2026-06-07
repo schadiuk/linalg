@@ -8,6 +8,8 @@ This document covers the implementation of LU algorithm present in, and used by 
 ## Table of contents:
 - [Preamble](#0-preamble-and-notation)
 - [Mathematical foundation](#1-mathematical-foundation)
+- [Packed storage](#2-packed-storage-layout)
+- [Algorithm](#3-lu_factor-the-blocked-algorithm)
 ---
 ## 0. Preamble and notation
 Matrices are $m \times n$ with entries in $\mathbb{F} \in \{\mathbb{R}, \mathbb{C}\}$. Elements are denoted either as $A_{ij}$ or as $A(i,j)$ using **0-based indexing throughout**, matching standard C++ array conventions.
@@ -121,3 +123,164 @@ $S$ is exactly the trailing submatrix that remains after eliminating the first $
 In the implementation, [Step 3] (Schur complement update) computes exactly $A_{33} \leftarrow A_{33} - L_{31} U_{23}$. The subsequent block iteration then factors this updated $A_{33}$ as if it were an independent matrix, which is precisely the inductive step.
 
 ---
+## 2. Packed storage layout
+After `lu_factor` returns, the in-place matrix `packed` holds:
+
+$$\text{packed}[i,j] = \begin{cases} L_{ij} & i > j \quad (\text{strict lower triangle; unit diagonal not stored}) \\ U_{ij} & i \leq j \quad (\text{upper triangle including diagonal}) \end{cases}$$
+
+Let us consider a concrete $4 \times 4$ example. Suppose the factorisation yielded:
+
+$$L = \begin{bmatrix} 1 & & & \\ 0.5 & 1 & & \\ 0.2 & 0.8 & 1 & \\ 0.4 & 0.1 & 0.6 & 1 \end{bmatrix}, \qquad U = \begin{bmatrix} 2 & 3 & 1 & 4 \\ & 5 & 2 & 1 \\ & & 3 & 2 \\ & & & 7 \end{bmatrix}$$
+
+The packed matrix representation is:
+
+$$\text{packed} = \begin{bmatrix} 2 & 3 & 1 & 4 \\ 0.5 & 5 & 2 & 1 \\ 0.2 & 0.8 & 3 & 2 \\ 0.4 & 0.1 & 0.6 & 7 \end{bmatrix}$$
+
+The unit  diagonal of $L$ is implicit; the "freed" positions store $U_{ii}$ instead. This is precisely the information the [BLAS solvers](/reference/BLAS.md#trsm-multiple-rhs-triangular-solve) need: `trsm('L','L','N','U',...)` reads only the strict lower triangle (the multipliers) and assumes unit diagonal, while `trsm('L','U','N','N',...)` reads the full upper triangle including the diagonal.
+
+### `unpack_L` and `unpack_U`
+
+Both helpers allocate a fresh output matrix and fill it from `packed`, parallelised over the major dimension. The separate allocation is unavoidable in the public API: `packed` must remain intact and unmodified for use by `lu_solve`, `lu_det`, and `lu_inverse`. Any in-place extraction would corrupt the packed representation.
+
+For instance, the row-major path in `unpack_L` is as follows:
+```cpp
+parallel_for(m, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / mn),
+    [&](size_t rs, size_t re) {
+        for (size_t i = rs; i < re; ++i)
+            for (size_t j = 0; j < mn; ++j) {
+                if (j == i) Lo(i, j) = T(1);
+                else if (j <  i) Lo(i, j) = pk(i, j);
+                // j > i: left at T(0) from construction.
+            };
+});
+```
+
+---
+## 3. `lu_factor`: the blocked algorithm
+
+### 3.1 Block structure
+
+An unblocked LU decomposition performs $O(n^3/3)$ arithmetic operations, but each rank-1 trailing update reads and writes the full trailing submatrix - a bandwidth-bound Level-2 operation. For a 2048-element-wide double matrix the trailing update at step $k = 0$ writes approximately $4\,\text{MB}$ per element, far exceeding typical L1 and L2 cache.
+
+Blocking reorganises the work into three phases per block column. The block width is set as a constant `LU_BLOCK = 64`. At outer step $k$, let $k_b = \min(\text{LU\_BLOCK},\, mn - k)$ and partition the current working matrix as:
+
+$$A^{(k)} = \begin{bmatrix} A_{11} & A_{12} & A_{13} \\ A_{21} & A_{22} & A_{23} \\ A_{31} & A_{32} & A_{33} \end{bmatrix}$$
+
+where the blocks have dimensions:
+
+| Block | Rows | Columns | Description |
+|---|---|---|---|
+| $A_{11}$ | $k$ | $k$ | Already factored. |
+| $A_{22}$ | $k_b$ | $k_b$ | Current panel diagonal. |
+| $A_{32}$ | $m - k - k_b$ | $k_b$ | Panel below diagonal. |
+| $A_{23}$ | $k_b$ | $n - k - k_b$ | Row block to the right. |
+| $A_{33}$ | $m - k - k_b$ | $n - k - k_b$ | Trailing submatrix. |
+
+The three steps per block column are  as follows:
+
+**Step 1: unblocked panel LU.** Factor the panel column $\bigl[\begin{smallmatrix} A_{22} \\ A_{32} \end{smallmatrix}\bigr]$ in-place using the standard unblocked algorithm with partial pivoting. Row swaps are applied to the **entire row** $[0:n]$ to keep the full packed matrix consistent (cf. [section 3.3](#33-full-row-swap)). After this step, the lower part of the panel holds the multipliers $L_{21}$, $L_{31}$, and the upper part holds $U_{22}$.
+
+**Step 2: panel triangular solve.** Solve $L_{22} \cdot U_{23} = A_{23}$ for $U_{23}$ via `trsm('L','L','N','U', T(1), panel, U12)`. The extracted panel `panel(kb, kb)` is a fresh `Matrix<T,L>`, not a `MatrixView` into $A$, for the reason discussed in [3.6](#36-submatrix-copies).
+
+**Step 3: Schur complement update.** Update the trailing submatrix:
+
+$$A_{33} \leftarrow A_{33} - L_{31} \cdot U_{23}$$
+
+via optimised BLAS `gemm(T(-1), L21, U12, T(1), C)`. This is the critical Level-3 operation; for large $n$, essentially all $O(n^3/3)$ arithmetic is performed here across all block iterations.
+
+### 3.2 Pivot search
+
+The search at panel step $j$ scans rows $[j, m)$ of column $j$ for the entry of largest absolute value:
+```cpp
+size_t pr = j;
+auto  mx = std::abs(static_cast<T>(A(j, j)));
+for (size_t i = j + 1; i < m; ++i) {
+    const auto v = std::abs(static_cast<T>(A(i, j)));
+    if (v > mx) { mx = v; pr = i; };
+};
+piv[j] = pr;
+```
+
+This is an $O(m)$ sequential scan. Parallelising it would require a parallel max-reduction with a subsequent all-thread broadcast, with synchronisation overhead dominating for all but extremely large panels (the crossover point is well beyond what typical panel widths reach at `LU_BLOCK = 64`). The [BLAS](/reference/BLAS.md#iamax--iamin-index-of-extremal-element) `iamax` routine makes the same choice for exactly the same reason.
+
+### 3.3 Full-row swap
+
+After identifying pivot row `pr`, the swap is applied to the entire row, not just the current block column:
+```cpp
+if constexpr (L == Layout::RowMajor) {
+    T* LINALG_RESTRICT rj = ap + j  * lda;
+    T* LINALG_RESTRICT rpr = ap + pr * lda;
+    parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
+        [rj, rpr](size_t s, size_t e) {
+            LINALG_VECTORIZE
+            for (size_t jj = s; jj < e; ++jj)
+                std::swap(rj[jj], rpr[jj]);
+        });
+} else {
+    parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
+        [ap, lda, j, pr](size_t s, size_t e) {
+            for (size_t jj = s; jj < e; ++jj)
+                std::swap(ap[jj*lda + j], ap[jj*lda + pr]);
+        });
+};
+```
+
+Columns $[0, k)$ of the working matrix already hold the multipliers from previous block steps. If those multipliers were not swapped, the final packed representation would encode a different permutation for the factored part than for the unfactored part, and $PA = LU$ equality would not hold. Keeping the swap global ensures that at termination `packed` is a valid simultaneous encoding of both factors under a single consistent permutation $P$.
+
+For `RowMajor` storage the swap is a vectorised `parallel_for` over a contiguous row. For ColMajor, the swap accesses elements at stride `lda` (one per column), which prevents auto-vectorisation; the loop is kept scalar.
+
+### 3.4 Multiplier scaling
+
+After the pivot swap is applied, all subdiagonal entries of column $j$ are divided by the pivot to produce multipliers:
+```cpp
+const T diag = static_cast<T>(A(j, j));
+if (diag != T(0)) {
+    const T inv = T(1) / diag;
+    if constexpr (L == Layout::RowMajor) { // Strided scalar loop.
+        for (size_t i = j + 1; i < m; ++i)
+            ap[i*lda + j] *= inv;
+    } else {
+        // ColMajor: contiguous column, vectorisable.
+        T* LINALG_RESTRICT col_j = ap + j * lda;
+        LINALG_VECTORIZE
+        for (size_t i = j + 1; i < m; ++i) col_j[i] *= inv;
+    };
+};
+```
+
+The single division produces `inv`; all $(m - j - 1)$ subsequent operations are multiplications. This matters particularly for complex types, where complex division costs approximately four real multiplications plus two additions plus a real division, whereas complex multiplication costs four real multiplications and two additions. Hoisting the division outside the loop is a measurable optimisation for large panels.
+
+### 3.5 Rank-1 panel update
+
+After scaling, the remaining panel columns (within the current block, indices $[j+1,\, k+k_b)$) are updated by subtracting the outer product of the multiplier column and the pivot row:
+
+$$A[i,\; j{+}1 : k{+}k_b] \mathrel{-}= L_{ij} \cdot A[j,\; j{+}1 : k{+}k_b] \quad \forall\, i > j$$
+
+In case of row-major storage, the implementation is:
+```cpp
+const T* LINALG_RESTRICT pivot_row = ap + j * lda;
+for (size_t i = j + 1; i < m; ++i) {
+    const T lij = ap[i*lda + j];
+    if (lij == T(0)) continue;
+    T* LINALG_RESTRICT tgt_row = ap + i * lda;
+    LINALG_VECTORIZE
+    for (size_t jj = j + 1; jj < right_start; ++jj) tgt_row[jj] -= lij * pivot_row[jj];
+};
+```
+
+Each inner loop is a contiguous SAXPY over the current block's column range - vectorisable. For `ColMajor` mode, the outer loop is over block-columns $jj$ and the inner is a scaled column subtraction, also accessing a contiguous memory:
+```cpp
+const T* LINALG_RESTRICT l_col = ap + j * lda;
+for (size_t jj = j + 1; jj < right_start; ++jj) {
+    const T pval = ap[jj*lda + j];
+    if (pval == T(0)) continue;
+    T* LINALG_RESTRICT tgt_col = ap + jj * lda;
+    LINALG_VECTORIZE
+    for (size_t i = j + 1; i < m; ++i) tgt_col[i] -= l_col[i] * pval;
+};
+```
+
+### 3.6 Submatrix copies
+`sub_copy_in(dst, r0, c0)` copies the rectangular block starting at `(r0, c0)` of $A$ into the fresh `Matrix<T,L>` `dst`. `sub_copy_out(src, r0, c0)` copies it back. These lambdas exist because `trsm` and `gemm` require operands with unit-stride leading dimensions to hit the `raw_mat_info` fast path; a subview of $A$ has `lda = n` (the full matrix width) rather than the block width, which would pass a valid but oversized stride to the BLAS kernel. The copy normalises the stride and eliminates the indirection.
+
+The parallelisation threshold is `PARALLEL_THRESHOLD_SIMPLE / nc` for `RowMajor` storage (each thread handles at least one complete row) and `PARALLEL_THRESHOLD_SIMPLE / nr` for `ColMajor` (at least one complete column), ensuring task granularity remains coarse enough to amortise spawn overhead.
