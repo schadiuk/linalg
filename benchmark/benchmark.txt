@@ -1,0 +1,449 @@
+linalg benchmark suite
+Hardware threads : 12
+sizeof(double)   : 8 B
+
+── Warm-up shot  N=1024 DGEMM: 32.223 ms  (66.65 GFLOP/s) ────
+
+── Level-1: axpy ────────────────────────────────────
+axpy<double>                                           64  thr=12  t=    0.000ms  iqr=  0.000ms      3.76 GFLOP/s    45.18 GB/s
+axpy<double>                                          512  thr=12  t=    0.000ms  iqr=  0.000ms     12.80 GFLOP/s   153.60 GB/s
+axpy<double>                                         4096  thr=12  t=    0.001ms  iqr=  0.000ms     11.84 GFLOP/s   142.06 GB/s
+axpy<double>                                        16384  thr=12  t=    0.002ms  iqr=  0.000ms     16.80 GFLOP/s   201.65 GB/s
+axpy<double>                                        65536  thr=12  t=    0.048ms  iqr=  0.007ms      2.74 GFLOP/s    32.93 GB/s
+axpy<double>                                       262144  thr=12  t=    0.110ms  iqr=  0.039ms      4.78 GFLOP/s    57.37 GB/s
+axpy<double>                                      1048576  thr=12  t=    0.373ms  iqr=  0.069ms      5.62 GFLOP/s    67.49 GB/s
+axpy<double>                                      4194304  thr=12  t=    1.854ms  iqr=  0.058ms      4.52 GFLOP/s    54.30 GB/s
+axpy<float>                                            64  thr=12  t=    0.000ms  iqr=  0.000ms      6.40 GFLOP/s    38.40 GB/s
+axpy<float>                                           512  thr=12  t=    0.000ms  iqr=  0.000ms     31.03 GFLOP/s   186.18 GB/s
+axpy<float>                                          4096  thr=12  t=    0.000ms  iqr=  0.000ms     68.84 GFLOP/s   413.04 GB/s
+axpy<float>                                         16384  thr=12  t=    0.001ms  iqr=  0.000ms     37.53 GFLOP/s   225.21 GB/s
+axpy<float>                                         65536  thr=12  t=    0.036ms  iqr=  0.005ms      3.62 GFLOP/s    21.71 GB/s
+axpy<float>                                        262144  thr=12  t=    0.117ms  iqr=  0.072ms      4.49 GFLOP/s    26.96 GB/s
+axpy<float>                                       1048576  thr=12  t=    0.240ms  iqr=  0.065ms      8.73 GFLOP/s    52.38 GB/s
+axpy<float>                                       4194304  thr=12  t=    0.941ms  iqr=  0.048ms      8.91 GFLOP/s    53.47 GB/s
+
+── Level-1: axpby ────────────────────────────────────
+axpby<double>                                          64  thr=12  t=    0.000ms  iqr=  0.000ms      8.35 GFLOP/s    66.78 GB/s
+axpby<double>                                         512  thr=12  t=    0.000ms  iqr=  0.000ms     33.39 GFLOP/s   267.13 GB/s
+axpby<double>                                        4096  thr=12  t=    0.000ms  iqr=  0.000ms     31.35 GFLOP/s   250.78 GB/s
+axpby<double>                                       16384  thr=12  t=    0.002ms  iqr=  0.000ms     28.74 GFLOP/s   229.95 GB/s
+axpby<double>                                       65536  thr=12  t=    0.045ms  iqr=  0.005ms      4.37 GFLOP/s    34.98 GB/s
+axpby<double>                                      262144  thr=12  t=    0.133ms  iqr=  0.055ms      5.90 GFLOP/s    47.19 GB/s
+axpby<double>                                     1048576  thr=12  t=    0.393ms  iqr=  0.132ms      8.00 GFLOP/s    63.99 GB/s
+axpby<double>                                     4194304  thr=12  t=    1.866ms  iqr=  0.073ms      6.74 GFLOP/s    53.95 GB/s
+
+── Level-1: dot ────────────────────────────────────
+dot<double>                                            64  thr=12  t=    0.000ms  iqr=  0.000ms      3.46 GFLOP/s    27.68 GB/s
+dot<double>                                           512  thr=12  t=    0.000ms  iqr=  0.000ms      9.75 GFLOP/s    78.02 GB/s
+dot<double>                                          4096  thr=12  t=    0.001ms  iqr=  0.000ms     12.74 GFLOP/s   101.92 GB/s
+dot<double>                                         16384  thr=12  t=    0.036ms  iqr=  0.006ms      0.90 GFLOP/s     7.19 GB/s
+dot<double>                                         65536  thr=12  t=    0.089ms  iqr=  0.112ms      1.47 GFLOP/s    11.76 GB/s
+dot<double>                                        262144  thr=12  t=    0.216ms  iqr=  0.039ms      2.43 GFLOP/s    19.46 GB/s
+dot<double>                                       1048576  thr=12  t=    0.383ms  iqr=  0.076ms      5.48 GFLOP/s    43.80 GB/s
+dot<double>                                       4194304  thr=12  t=    1.385ms  iqr=  0.183ms      6.06 GFLOP/s    48.44 GB/s
+
+── Level-1: dotc ────────────────────────────────────
+dotc<complex<double>>                                  64  thr=12  t=    0.000ms  iqr=  0.000ms      6.98 GFLOP/s    37.24 GB/s
+dotc<complex<double>>                                 512  thr=12  t=    0.000ms  iqr=  0.000ms     11.82 GFLOP/s    63.02 GB/s
+dotc<complex<double>>                                4096  thr=12  t=    0.002ms  iqr=  0.000ms      9.89 GFLOP/s    52.75 GB/s
+dotc<complex<double>>                               16384  thr=12  t=    0.053ms  iqr=  0.028ms      1.86 GFLOP/s     9.92 GB/s
+dotc<complex<double>>                               65536  thr=12  t=    0.102ms  iqr=  0.081ms      3.86 GFLOP/s    20.56 GB/s
+dotc<complex<double>>                              262144  thr=12  t=    0.261ms  iqr=  0.055ms      6.04 GFLOP/s    32.20 GB/s
+dotc<complex<double>>                             1048576  thr=12  t=    0.748ms  iqr=  0.070ms      8.41 GFLOP/s    44.85 GB/s
+dotc<complex<double>>                             4194304  thr=12  t=    2.675ms  iqr=  0.231ms      9.41 GFLOP/s    50.18 GB/s
+
+── Level-1: nrm2 ────────────────────────────────────
+nrm2<double>                                           64  thr=12  t=    0.000ms  iqr=  0.000ms      1.83 GFLOP/s     7.31 GB/s
+nrm2<double>                                          512  thr=12  t=    0.000ms  iqr=  0.000ms      4.16 GFLOP/s    16.65 GB/s
+nrm2<double>                                         4096  thr=12  t=    0.002ms  iqr=  0.000ms      4.65 GFLOP/s    18.59 GB/s
+nrm2<double>                                        16384  thr=12  t=    0.036ms  iqr=  0.005ms      0.90 GFLOP/s     3.60 GB/s
+nrm2<double>                                        65536  thr=12  t=    0.098ms  iqr=  0.046ms      1.34 GFLOP/s     5.35 GB/s
+nrm2<double>                                       262144  thr=12  t=    0.229ms  iqr=  0.034ms      2.29 GFLOP/s     9.14 GB/s
+nrm2<double>                                      1048576  thr=12  t=    0.410ms  iqr=  0.048ms      5.12 GFLOP/s    20.47 GB/s
+nrm2<double>                                      4194304  thr=12  t=    2.197ms  iqr=  0.148ms      3.82 GFLOP/s    15.27 GB/s
+
+── Level-1: asum ────────────────────────────────────
+asum<double>                                           64  thr=12  t=    0.000ms  iqr=  0.000ms      5.57 GFLOP/s    22.26 GB/s
+asum<double>                                          512  thr=12  t=    0.000ms  iqr=  0.000ms     16.00 GFLOP/s    64.00 GB/s
+asum<double>                                         4096  thr=12  t=    0.000ms  iqr=  0.000ms     20.84 GFLOP/s    83.38 GB/s
+asum<double>                                        16384  thr=12  t=    0.114ms  iqr=  0.096ms      0.29 GFLOP/s     1.15 GB/s
+asum<double>                                        65536  thr=12  t=    0.089ms  iqr=  0.101ms      1.47 GFLOP/s     5.87 GB/s
+asum<double>                                       262144  thr=12  t=    0.158ms  iqr=  0.033ms      3.33 GFLOP/s    13.31 GB/s
+asum<double>                                      1048576  thr=12  t=    0.197ms  iqr=  0.092ms     10.63 GFLOP/s    42.50 GB/s
+asum<double>                                      4194304  thr=12  t=    0.853ms  iqr=  0.068ms      9.83 GFLOP/s    39.33 GB/s
+
+── Level-1: scal ────────────────────────────────────
+scal<double>                                           64  thr=12  t=    0.000ms  iqr=  0.000ms      2.91 GFLOP/s    46.55 GB/s
+scal<double>                                          512  thr=12  t=    0.000ms  iqr=  0.000ms     14.22 GFLOP/s   227.56 GB/s
+scal<double>                                         4096  thr=12  t=    0.000ms  iqr=  0.000ms     27.86 GFLOP/s   445.82 GB/s
+scal<double>                                        16384  thr=12  t=    0.001ms  iqr=  0.000ms     11.12 GFLOP/s   177.97 GB/s
+scal<double>                                        65536  thr=12  t=    0.180ms  iqr=  0.050ms      0.36 GFLOP/s     5.82 GB/s
+scal<double>                                       262144  thr=12  t=    0.097ms  iqr=  0.046ms      2.71 GFLOP/s    43.43 GB/s
+scal<double>                                      1048576  thr=12  t=    0.250ms  iqr=  0.034ms      4.20 GFLOP/s    67.14 GB/s
+scal<double>                                      4194304  thr=12  t=    1.286ms  iqr=  0.173ms      3.26 GFLOP/s    52.19 GB/s
+
+── Level-1: iamax ────────────────────────────────────
+iamax<double>                                          64  thr=12  t=    0.000ms  iqr=  0.000ms     7.76 GB/s
+iamax<double>                                         512  thr=12  t=    0.000ms  iqr=  0.000ms    10.24 GB/s
+iamax<double>                                        4096  thr=12  t=    0.003ms  iqr=  0.000ms    10.18 GB/s
+iamax<double>                                       16384  thr=12  t=    0.013ms  iqr=  0.001ms    10.22 GB/s
+iamax<double>                                       65536  thr=12  t=    0.048ms  iqr=  0.005ms    10.88 GB/s
+iamax<double>                                      262144  thr=12  t=    0.193ms  iqr=  0.000ms    10.88 GB/s
+iamax<double>                                     1048576  thr=12  t=    0.809ms  iqr=  0.035ms    10.37 GB/s
+iamax<double>                                     4194304  thr=12  t=    3.464ms  iqr=  0.084ms     9.69 GB/s
+
+── Level-2: gemv ────────────────────────────────────
+gemv<double>                                           32  thr=12  t=    0.000ms  iqr=  0.000ms     10.56 GFLOP/s    46.19 GB/s
+gemv<double>                                           64  thr=12  t=    0.000ms  iqr=  0.000ms     17.54 GFLOP/s    73.46 GB/s
+gemv<double>                                          128  thr=12  t=    0.001ms  iqr=  0.000ms     30.97 GFLOP/s   126.79 GB/s
+gemv<double>                                          256  thr=12  t=    0.005ms  iqr=  0.000ms     28.35 GFLOP/s   114.71 GB/s
+gemv<double>                                          512  thr=12  t=    0.033ms  iqr=  0.005ms     15.90 GFLOP/s    63.98 GB/s
+gemv<double>                                         1024  thr=12  t=    0.158ms  iqr=  0.027ms     13.27 GFLOP/s    53.22 GB/s
+gemv<double>                                         2048  thr=12  t=    1.434ms  iqr=  0.166ms      5.85 GFLOP/s    23.43 GB/s
+gemv<double>                                         4096  thr=12  t=    6.779ms  iqr=  0.400ms      4.95 GFLOP/s    19.81 GB/s
+
+── Level-2: trsv ────────────────────────────────────
+trsv<double> upper-notrans                             32  thr= 1  t=    0.001ms  iqr=  0.000ms      2.01 GFLOP/s     8.03 GB/s
+trsv<double> lower-notrans                             32  thr= 1  t=    0.000ms  iqr=  0.000ms      3.34 GFLOP/s    13.34 GB/s
+trsv<double> upper-trans                               32  thr= 1  t=    0.000ms  iqr=  0.000ms      3.85 GFLOP/s    15.40 GB/s
+trsv<double> lower-trans                               32  thr= 1  t=    0.001ms  iqr=  0.000ms      1.82 GFLOP/s     7.29 GB/s
+trsv<double> upper-notrans                             64  thr= 1  t=    0.001ms  iqr=  0.000ms      3.14 GFLOP/s    12.56 GB/s
+trsv<double> lower-notrans                             64  thr= 1  t=    0.000ms  iqr=  0.000ms      9.23 GFLOP/s    36.90 GB/s
+trsv<double> upper-trans                               64  thr= 1  t=    0.000ms  iqr=  0.000ms      9.18 GFLOP/s    36.74 GB/s
+trsv<double> lower-trans                               64  thr= 1  t=    0.001ms  iqr=  0.000ms      4.70 GFLOP/s    18.81 GB/s
+trsv<double> upper-notrans                            128  thr= 1  t=    0.002ms  iqr=  0.000ms      7.85 GFLOP/s    31.40 GB/s
+trsv<double> lower-notrans                            128  thr= 1  t=    0.001ms  iqr=  0.000ms     17.30 GFLOP/s    69.20 GB/s
+trsv<double> upper-trans                              128  thr= 1  t=    0.003ms  iqr=  0.000ms      6.15 GFLOP/s    24.59 GB/s
+trsv<double> lower-trans                              128  thr= 1  t=    0.003ms  iqr=  0.000ms      5.34 GFLOP/s    21.38 GB/s
+trsv<double> upper-notrans                            256  thr= 1  t=    0.006ms  iqr=  0.000ms     11.48 GFLOP/s    45.93 GB/s
+trsv<double> lower-notrans                            256  thr= 1  t=    0.003ms  iqr=  0.000ms     23.26 GFLOP/s    93.02 GB/s
+trsv<double> upper-trans                              256  thr= 1  t=    0.012ms  iqr=  0.000ms      5.28 GFLOP/s    21.13 GB/s
+trsv<double> lower-trans                              256  thr= 1  t=    0.013ms  iqr=  0.000ms      5.09 GFLOP/s    20.35 GB/s
+trsv<double> upper-notrans                            512  thr= 1  t=    0.018ms  iqr=  0.003ms     14.86 GFLOP/s    59.43 GB/s
+trsv<double> lower-notrans                            512  thr= 1  t=    0.014ms  iqr=  0.001ms     19.12 GFLOP/s    76.47 GB/s
+trsv<double> upper-trans                              512  thr= 1  t=    0.119ms  iqr=  0.009ms      2.20 GFLOP/s     8.80 GB/s
+trsv<double> lower-trans                              512  thr= 1  t=    0.131ms  iqr=  0.006ms      2.01 GFLOP/s     8.02 GB/s
+trsv<double> upper-notrans                           1024  thr= 1  t=    0.083ms  iqr=  0.000ms     12.67 GFLOP/s    50.68 GB/s
+trsv<double> lower-notrans                           1024  thr= 1  t=    0.081ms  iqr=  0.002ms     12.99 GFLOP/s    51.96 GB/s
+trsv<double> upper-trans                             1024  thr= 1  t=    1.013ms  iqr=  0.077ms      1.04 GFLOP/s     4.14 GB/s
+trsv<double> lower-trans                             1024  thr= 1  t=    0.932ms  iqr=  0.046ms      1.12 GFLOP/s     4.50 GB/s
+
+── Level-2: trmv ────────────────────────────────────
+trmv<double> upper-notrans                             32  thr=12  t=    0.000ms  iqr=  0.000ms      8.90 GFLOP/s    35.62 GB/s
+trmv<double> upper-notrans                             64  thr=12  t=    0.000ms  iqr=  0.000ms     13.61 GFLOP/s    54.43 GB/s
+trmv<double> upper-notrans                            128  thr=12  t=    0.001ms  iqr=  0.000ms     17.67 GFLOP/s    70.70 GB/s
+trmv<double> upper-notrans                            256  thr=12  t=    0.003ms  iqr=  0.000ms     21.01 GFLOP/s    84.05 GB/s
+trmv<double> upper-notrans                            512  thr=12  t=    0.018ms  iqr=  0.006ms     14.88 GFLOP/s    59.50 GB/s
+trmv<double> upper-notrans                           1024  thr=12  t=    0.084ms  iqr=  0.007ms     12.42 GFLOP/s    49.68 GB/s
+
+── Level-2: symv ────────────────────────────────────
+symv<double>                                           32  thr=12  t=    0.000ms  iqr=  0.000ms      5.33 GFLOP/s    23.33 GB/s
+symv<double>                                           64  thr=12  t=    0.001ms  iqr=  0.000ms      9.93 GFLOP/s    41.58 GB/s
+symv<double>                                          128  thr=12  t=    0.001ms  iqr=  0.000ms     22.66 GFLOP/s    92.77 GB/s
+symv<double>                                          256  thr=12  t=    0.006ms  iqr=  0.000ms     23.74 GFLOP/s    96.06 GB/s
+symv<double>                                          512  thr=12  t=    0.025ms  iqr=  0.001ms     20.76 GFLOP/s    83.53 GB/s
+symv<double>                                         1024  thr=12  t=    0.117ms  iqr=  0.020ms     17.98 GFLOP/s    72.14 GB/s
+
+── Level-2: ger ────────────────────────────────────
+ger<double>                                            32  thr=12  t=    0.000ms  iqr=  0.000ms     16.25 GFLOP/s    69.08 GB/s
+ger<double>                                            64  thr=12  t=    0.000ms  iqr=  0.000ms     27.31 GFLOP/s   112.64 GB/s
+ger<double>                                           128  thr=12  t=    0.002ms  iqr=  0.000ms     20.57 GFLOP/s    83.57 GB/s
+ger<double>                                           256  thr=12  t=    0.010ms  iqr=  0.000ms     13.67 GFLOP/s    55.10 GB/s
+ger<double>                                           512  thr=12  t=    0.042ms  iqr=  0.007ms     12.46 GFLOP/s    50.02 GB/s
+ger<double>                                          1024  thr=12  t=    0.193ms  iqr=  0.048ms     10.85 GFLOP/s    43.47 GB/s
+gerc<complex<double>>                                  32  thr=12  t=    0.001ms  iqr=  0.000ms     11.57 GFLOP/s
+gerc<complex<double>>                                  64  thr=12  t=    0.003ms  iqr=  0.000ms     12.64 GFLOP/s
+gerc<complex<double>>                                 128  thr=12  t=    0.010ms  iqr=  0.000ms     13.05 GFLOP/s
+gerc<complex<double>>                                 256  thr=12  t=    0.104ms  iqr=  0.067ms      5.03 GFLOP/s
+gerc<complex<double>>                                 512  thr=12  t=    0.153ms  iqr=  0.008ms     13.71 GFLOP/s
+gerc<complex<double>>                                1024  thr=12  t=    1.018ms  iqr=  0.075ms      8.24 GFLOP/s
+
+── Level-3: gemm square ────────────────────────────────────
+gemm_square<double>                                    32  thr=12  t=    0.003ms  iqr=  0.001ms     21.42 GFLOP/s     8.03 GB/s
+gemm_square<double>                                    64  thr=12  t=    0.133ms  iqr=  0.078ms      3.93 GFLOP/s     0.74 GB/s
+gemm_square<double>                                   128  thr=12  t=    0.237ms  iqr=  0.066ms     17.73 GFLOP/s     1.66 GB/s
+gemm_square<double>                                   256  thr=12  t=    0.614ms  iqr=  0.047ms     54.66 GFLOP/s     2.56 GB/s
+gemm_square<double>                                   512  thr=12  t=    3.791ms  iqr=  0.154ms     70.81 GFLOP/s     1.66 GB/s
+gemm_square<double>                                  1024  thr=12  t=   31.322ms  iqr=  1.100ms     68.56 GFLOP/s     0.80 GB/s
+gemm_square<double>                                  2048  thr=12  t=  317.759ms  iqr= 10.574ms     54.07 GFLOP/s     0.32 GB/s
+gemm_square<double>                                  4096  thr=12  t= 4182.510ms  iqr=275.088ms     32.86 GFLOP/s     0.10 GB/s
+
+── Level-3: gemm tall-skinny ────────────────────────────────────
+gemm_tall_skinny K=1                                 2048  thr=12  t=    2.683ms  iqr=  0.063ms      3.13 GFLOP/s  [M=N=2048 K=1]
+gemm_tall_skinny K=4                                 2048  thr=12  t=    3.076ms  iqr=  0.242ms     10.91 GFLOP/s  [M=N=2048 K=4]
+gemm_tall_skinny K=16                                2048  thr=12  t=    4.226ms  iqr=  0.108ms     31.76 GFLOP/s  [M=N=2048 K=16]
+gemm_tall_skinny K=64                                2048  thr=12  t=   10.833ms  iqr=  0.530ms     49.56 GFLOP/s  [M=N=2048 K=64]
+gemm_tall_skinny K=256                               2048  thr=12  t=   42.416ms  iqr=  1.071ms     50.63 GFLOP/s  [M=N=2048 K=256]
+gemm_tall_skinny K=512                               2048  thr=12  t=   79.600ms  iqr=  1.777ms     53.96 GFLOP/s  [M=N=2048 K=512]
+gemm_tall_skinny K=2048                              2048  thr=12  t=  347.469ms  iqr=  2.418ms     49.44 GFLOP/s  [M=N=2048 K=2048]
+
+── Level-3: gemm wide-short ────────────────────────────────────
+gemm_wide_short N=1                                  2048  thr=12  t=    2.534ms  iqr=  0.065ms      3.31 GFLOP/s  [M=K=2048 N=1]
+gemm_wide_short N=4                                  2048  thr=12  t=    2.495ms  iqr=  0.130ms     13.45 GFLOP/s  [M=K=2048 N=4]
+gemm_wide_short N=16                                 2048  thr=12  t=    3.755ms  iqr=  0.141ms     35.74 GFLOP/s  [M=K=2048 N=16]
+gemm_wide_short N=64                                 2048  thr=12  t=    6.604ms  iqr=  0.298ms     81.30 GFLOP/s  [M=K=2048 N=64]
+gemm_wide_short N=256                                2048  thr=12  t=   36.497ms  iqr=  0.886ms     58.84 GFLOP/s  [M=K=2048 N=256]
+gemm_wide_short N=512                                2048  thr=12  t=   75.823ms  iqr=  1.157ms     56.64 GFLOP/s  [M=K=2048 N=512]
+
+── Level-3: gemm transposed ────────────────────────────────────
+gemm_NN<double> N=1024                               1024  thr=12  t=   39.237ms  iqr=  0.974ms     54.73 GFLOP/s
+gemm_TN<double> N=1024                               1024  thr=12  t=   40.690ms  iqr=  2.947ms     52.78 GFLOP/s
+gemm_NT<double> N=1024                               1024  thr=12  t=   41.792ms  iqr=  1.652ms     51.39 GFLOP/s
+gemm_TT<double> N=1024                               1024  thr=12  t=   47.238ms  iqr=  4.100ms     45.46 GFLOP/s
+gemm_HN<double> N=1024                               1024  thr=12  t=   44.858ms  iqr=  1.728ms     47.87 GFLOP/s
+
+── Level-3: trsm ────────────────────────────────────
+trsm<double> nrhs=1                                   512  thr=12  t=    0.220ms  iqr=  0.168ms      1.19 GFLOP/s  [N=512 nrhs=1]
+trsm<double> nrhs=4                                   512  thr=12  t=    0.204ms  iqr=  0.010ms      5.14 GFLOP/s  [N=512 nrhs=4]
+trsm<double> nrhs=16                                  512  thr=12  t=    0.588ms  iqr=  0.009ms      7.13 GFLOP/s  [N=512 nrhs=16]
+trsm<double> nrhs=64                                  512  thr=12  t=    1.943ms  iqr=  0.034ms      8.64 GFLOP/s  [N=512 nrhs=64]
+trsm<double> nrhs=256                                 512  thr=12  t=    3.247ms  iqr=  0.182ms     20.67 GFLOP/s  [N=512 nrhs=256]
+trsm<double> nrhs=512                                 512  thr=12  t=    3.890ms  iqr=  0.113ms     34.50 GFLOP/s  [N=512 nrhs=512]
+
+── Level-3: syrk ────────────────────────────────────
+syrk<double> K=N/4                                     32  thr=12  t=    0.167ms  iqr=  0.035ms      0.06 GFLOP/s  [K=9]
+syrk<double> K=N/4                                     64  thr=12  t=    0.074ms  iqr=  0.001ms      0.95 GFLOP/s  [K=17]
+syrk<double> K=N/4                                    128  thr=12  t=    0.138ms  iqr=  0.061ms      3.94 GFLOP/s  [K=33]
+syrk<double> K=N/4                                    256  thr=12  t=    0.348ms  iqr=  0.018ms     12.28 GFLOP/s  [K=65]
+syrk<double> K=N/4                                    512  thr=12  t=    1.271ms  iqr=  0.206ms     26.65 GFLOP/s  [K=129]
+syrk<double> K=N/4                                   1024  thr=12  t=    7.140ms  iqr=  0.360ms     37.78 GFLOP/s  [K=257]
+
+── Level-3: herk ────────────────────────────────────
+herk<complex<double>> K=N/4                            64  thr=12  t=    0.073ms  iqr=  0.004ms      7.77 GFLOP/s  [K=17]
+herk<complex<double>> K=N/4                           128  thr=12  t=    0.192ms  iqr=  0.046ms     22.69 GFLOP/s  [K=33]
+herk<complex<double>> K=N/4                           256  thr=12  t=    0.705ms  iqr=  0.080ms     48.54 GFLOP/s  [K=65]
+herk<complex<double>> K=N/4                           512  thr=12  t=    3.094ms  iqr=  0.189ms     87.60 GFLOP/s  [K=129]
+
+── Decomp: LU factor ────────────────────────────────────
+lu_factor<double>                                      32  thr=12  t=    0.004ms  iqr=  0.000ms      4.96 GFLOP/s
+lu_factor<double>                                      64  thr=12  t=    0.019ms  iqr=  0.001ms      9.01 GFLOP/s
+lu_factor<double>                                     128  thr=12  t=    0.223ms  iqr=  0.004ms      6.26 GFLOP/s
+lu_factor<double>                                     256  thr=12  t=    1.602ms  iqr=  0.179ms      6.98 GFLOP/s
+lu_factor<double>                                     512  thr=12  t=    7.944ms  iqr=  0.593ms     11.26 GFLOP/s
+lu_factor<double>                                    1024  thr=12  t=   46.718ms  iqr=  4.095ms     15.32 GFLOP/s
+
+── Decomp: LU solve ────────────────────────────────────
+lu_solve<double> single-rhs                            32  thr=12  t=    0.001ms  iqr=  0.000ms      2.75 GFLOP/s
+lu_solve<double> single-rhs                            64  thr=12  t=    0.002ms  iqr=  0.000ms      4.49 GFLOP/s
+lu_solve<double> single-rhs                           128  thr=12  t=    0.003ms  iqr=  0.000ms     10.90 GFLOP/s
+lu_solve<double> single-rhs                           256  thr=12  t=    0.009ms  iqr=  0.000ms     15.22 GFLOP/s
+lu_solve<double> single-rhs                           512  thr=12  t=    0.038ms  iqr=  0.000ms     13.96 GFLOP/s
+lu_solve<double> single-rhs                          1024  thr=12  t=    0.236ms  iqr=  0.017ms      8.88 GFLOP/s
+lu_solve<double> nrhs=1                               512  thr=12  t=    0.151ms  iqr=  0.131ms      3.47 GFLOP/s  [N=512]
+lu_solve<double> nrhs=4                               512  thr=12  t=    0.397ms  iqr=  0.235ms      5.28 GFLOP/s  [N=512]
+lu_solve<double> nrhs=16                              512  thr=12  t=    0.818ms  iqr=  0.130ms     10.25 GFLOP/s  [N=512]
+lu_solve<double> nrhs=64                              512  thr=12  t=    2.518ms  iqr=  0.148ms     13.32 GFLOP/s  [N=512]
+lu_solve<double> nrhs=256                             512  thr=12  t=    4.170ms  iqr=  0.117ms     32.19 GFLOP/s  [N=512]
+
+── Decomp: LU det+inv ────────────────────────────────────
+lu_det<double>                                         32  thr= 1  t=    0.000ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                     32  thr=12  t=    0.075ms  iqr=  0.003ms      0.87 GFLOP/s  [given pre-factored LU]
+lu_det<double>                                         64  thr= 1  t=    0.000ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                     64  thr=12  t=    0.138ms  iqr=  0.002ms      3.80 GFLOP/s  [given pre-factored LU]
+lu_det<double>                                        128  thr= 1  t=    0.001ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                    128  thr=12  t=    0.419ms  iqr=  0.055ms     10.01 GFLOP/s  [given pre-factored LU]
+lu_det<double>                                        256  thr= 1  t=    0.001ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                    256  thr=12  t=    1.307ms  iqr=  0.024ms     25.66 GFLOP/s  [given pre-factored LU]
+lu_det<double>                                        512  thr= 1  t=    0.003ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                    512  thr=12  t=    6.270ms  iqr=  0.244ms     42.81 GFLOP/s  [given pre-factored LU]
+lu_det<double>                                       1024  thr= 1  t=    0.006ms  iqr=  0.000ms  [given pre-factored LU]
+lu_inverse<double>                                   1024  thr=12  t=   51.624ms  iqr=  1.534ms     41.60 GFLOP/s  [given pre-factored LU]
+
+── Decomp: LU full pipeline ────────────────────────────────────
+lu_full_pipeline<double>                               32  thr=12  t=    0.008ms  iqr=  0.001ms     10.38 GFLOP/s
+lu_full_pipeline<double>                               64  thr=12  t=    0.023ms  iqr=  0.002ms     30.77 GFLOP/s
+lu_full_pipeline<double>                              128  thr=12  t=    0.252ms  iqr=  0.028ms     22.15 GFLOP/s
+lu_full_pipeline<double>                              256  thr=12  t=    1.813ms  iqr=  0.126ms     24.68 GFLOP/s
+lu_full_pipeline<double>                              512  thr=12  t=    8.255ms  iqr=  0.871ms     43.36 GFLOP/s
+lu_full_pipeline<double>                             1024  thr=12  t=   41.181ms  iqr=  4.170ms     69.53 GFLOP/s
+
+── Decomp: QR ────────────────────────────────────
+qr_reduced<double>                                     64  thr=12  t=    0.052ms  iqr=  0.003ms      6.68 GFLOP/s
+qr_complete<double>                                    64  thr=12  t=    0.052ms  iqr=  0.004ms      6.67 GFLOP/s
+qr_R-only<double>                                      64  thr=12  t=    0.031ms  iqr=  0.001ms      5.59 GFLOP/s
+qr_pivoted<double>                                     64  thr=12  t=    0.057ms  iqr=  0.001ms      6.11 GFLOP/s
+qr_reduced<double>                                    128  thr=12  t=    1.096ms  iqr=  0.053ms      2.55 GFLOP/s
+qr_complete<double>                                   128  thr=12  t=    1.028ms  iqr=  0.074ms      2.72 GFLOP/s
+qr_R-only<double>                                     128  thr=12  t=    0.873ms  iqr=  0.062ms      1.60 GFLOP/s
+qr_pivoted<double>                                    128  thr=12  t=    0.400ms  iqr=  0.044ms      7.00 GFLOP/s
+qr_reduced<double>                                    256  thr=12  t=    4.889ms  iqr=  0.416ms      4.58 GFLOP/s
+qr_complete<double>                                   256  thr=12  t=    4.672ms  iqr=  0.192ms      4.79 GFLOP/s
+qr_R-only<double>                                     256  thr=12  t=    3.491ms  iqr=  0.379ms      3.20 GFLOP/s
+qr_pivoted<double>                                    256  thr=12  t=    2.956ms  iqr=  0.248ms      7.57 GFLOP/s
+qr_reduced<double>                                    512  thr=12  t=   29.387ms  iqr=  0.750ms      6.09 GFLOP/s
+qr_complete<double>                                   512  thr=12  t=   28.553ms  iqr=  1.876ms      6.27 GFLOP/s
+qr_R-only<double>                                     512  thr=12  t=   15.428ms  iqr=  0.896ms      5.80 GFLOP/s
+qr_pivoted<double>                                    512  thr=12  t=   29.650ms  iqr=  1.915ms      6.04 GFLOP/s
+qr_reduced<double>                                   1024  thr=12  t=  237.250ms  iqr= 30.424ms      6.03 GFLOP/s
+qr_complete<double>                                  1024  thr=12  t=  203.206ms  iqr=  7.640ms      7.05 GFLOP/s
+qr_R-only<double>                                    1024  thr=12  t=   74.905ms  iqr=  2.154ms      9.56 GFLOP/s
+qr_pivoted<double>                                   1024  thr=12  t=  269.224ms  iqr=  6.554ms      5.32 GFLOP/s
+
+── Norms: vector ────────────────────────────────────
+vec_norm_1<double>                                     64  thr=12  t=    0.000ms  iqr=  0.000ms     9.31 GB/s
+vec_norm_1<double>                                    512  thr=12  t=    0.000ms  iqr=  0.000ms    43.12 GB/s
+vec_norm_1<double>                                   4096  thr=12  t=    0.001ms  iqr=  0.000ms    58.31 GB/s
+vec_norm_1<double>                                  16384  thr=12  t=    0.042ms  iqr=  0.002ms     3.15 GB/s
+vec_norm_1<double>                                  65536  thr=12  t=    0.068ms  iqr=  0.029ms     7.69 GB/s
+vec_norm_1<double>                                 262144  thr=12  t=    0.202ms  iqr=  0.099ms    10.36 GB/s
+vec_norm_1<double>                                1048576  thr=12  t=    0.328ms  iqr=  0.073ms    25.55 GB/s
+vec_norm_1<double>                                4194304  thr=12  t=    0.993ms  iqr=  0.115ms    33.80 GB/s
+vec_norm_2<double>                                     64  thr=12  t=    0.000ms  iqr=  0.000ms     7.76 GB/s
+vec_norm_2<double>                                    512  thr=12  t=    0.000ms  iqr=  0.000ms    17.58 GB/s
+vec_norm_2<double>                                   4096  thr=12  t=    0.002ms  iqr=  0.000ms    20.79 GB/s
+vec_norm_2<double>                                  16384  thr=12  t=    0.035ms  iqr=  0.014ms     3.71 GB/s
+vec_norm_2<double>                                  65536  thr=12  t=    0.074ms  iqr=  0.085ms     7.08 GB/s
+vec_norm_2<double>                                 262144  thr=12  t=    0.242ms  iqr=  0.036ms     8.68 GB/s
+vec_norm_2<double>                                1048576  thr=12  t=    0.467ms  iqr=  0.057ms    17.97 GB/s
+vec_norm_2<double>                                4194304  thr=12  t=    2.222ms  iqr=  0.185ms    15.10 GB/s
+vec_norm_inf<double>                                   64  thr=12  t=    0.000ms  iqr=  0.000ms    10.89 GB/s
+vec_norm_inf<double>                                  512  thr=12  t=    0.000ms  iqr=  0.000ms    31.27 GB/s
+vec_norm_inf<double>                                 4096  thr=12  t=    0.001ms  iqr=  0.000ms    41.85 GB/s
+vec_norm_inf<double>                                16384  thr=12  t=    0.003ms  iqr=  0.000ms    38.74 GB/s
+vec_norm_inf<double>                                65536  thr=12  t=    0.013ms  iqr=  0.000ms    40.57 GB/s
+vec_norm_inf<double>                               262144  thr=12  t=    0.049ms  iqr=  0.004ms    42.58 GB/s
+vec_norm_inf<double>                              1048576  thr=12  t=    0.197ms  iqr=  0.016ms    42.54 GB/s
+vec_norm_inf<double>                              4194304  thr=12  t=    1.313ms  iqr=  0.083ms    25.55 GB/s
+
+── Norms: matrix ────────────────────────────────────
+mat_norm_1<double>                                     32  thr=12  t=    0.000ms  iqr=  0.000ms    50.26 GB/s
+mat_norm_1<double>                                     64  thr=12  t=    0.001ms  iqr=  0.000ms    58.62 GB/s
+mat_norm_1<double>                                    128  thr=12  t=    0.010ms  iqr=  0.000ms    13.51 GB/s
+mat_norm_1<double>                                    256  thr=12  t=    0.024ms  iqr=  0.000ms    21.51 GB/s
+mat_norm_1<double>                                    512  thr=12  t=    0.467ms  iqr=  0.061ms     4.49 GB/s
+mat_norm_1<double>                                   1024  thr=12  t=    2.202ms  iqr=  0.042ms     3.81 GB/s
+mat_norm_fro<double>                                   32  thr=12  t=    0.001ms  iqr=  0.000ms    14.89 GB/s
+mat_norm_fro<double>                                   64  thr=12  t=    0.002ms  iqr=  0.000ms    17.26 GB/s
+mat_norm_fro<double>                                  128  thr=12  t=    0.058ms  iqr=  0.028ms     2.27 GB/s
+mat_norm_fro<double>                                  256  thr=12  t=    0.075ms  iqr=  0.076ms     7.01 GB/s
+mat_norm_fro<double>                                  512  thr=12  t=    0.211ms  iqr=  0.047ms     9.96 GB/s
+mat_norm_fro<double>                                 1024  thr=12  t=    0.440ms  iqr=  0.039ms    19.05 GB/s
+mat_norm_inf<double>                                   32  thr=12  t=    0.000ms  iqr=  0.000ms    86.23 GB/s
+mat_norm_inf<double>                                   64  thr=12  t=    0.000ms  iqr=  0.000ms   140.03 GB/s
+mat_norm_inf<double>                                  128  thr=12  t=    0.001ms  iqr=  0.000ms   153.66 GB/s
+mat_norm_inf<double>                                  256  thr=12  t=    0.003ms  iqr=  0.000ms   159.70 GB/s
+mat_norm_inf<double>                                  512  thr=12  t=    0.037ms  iqr=  0.005ms    56.35 GB/s
+mat_norm_inf<double>                                 1024  thr=12  t=    0.145ms  iqr=  0.007ms    58.04 GB/s
+
+── Cross: layout comparison ────────────────────────────────────
+gemm_RowMajor N=128                                   128  thr=12  t=    0.147ms  iqr=  0.022ms     28.44 GFLOP/s
+gemm_ColMajor N=128                                   128  thr=12  t=    0.165ms  iqr=  0.001ms     25.44 GFLOP/s
+gemm_RowMajor N=256                                   256  thr=12  t=    0.645ms  iqr=  0.070ms     51.99 GFLOP/s
+gemm_ColMajor N=256                                   256  thr=12  t=    0.659ms  iqr=  0.030ms     50.90 GFLOP/s
+gemm_RowMajor N=512                                   512  thr=12  t=    4.250ms  iqr=  0.388ms     63.16 GFLOP/s
+gemm_ColMajor N=512                                   512  thr=12  t=    4.292ms  iqr=  0.118ms     62.54 GFLOP/s
+gemm_RowMajor N=1024                                 1024  thr=12  t=   33.154ms  iqr=  0.448ms     64.77 GFLOP/s
+gemm_ColMajor N=1024                                 1024  thr=12  t=   33.390ms  iqr=  0.609ms     64.32 GFLOP/s
+gemm_RowMajor N=2048                                 2048  thr=12  t=  343.631ms  iqr=  7.038ms     50.00 GFLOP/s
+gemm_ColMajor N=2048                                 2048  thr=12  t=  346.563ms  iqr= 20.392ms     49.57 GFLOP/s
+
+── Cross: dtype comparison ────────────────────────────────────
+gemm_dtype<double>                                    512  thr=12  t=    5.811ms  iqr=  0.495ms     46.19 GFLOP/s
+gemm_dtype<float>                                     512  thr=12  t=    3.883ms  iqr=  0.055ms     69.12 GFLOP/s  [expect ~2x vs double (AVX2 width)]
+gemm_dtype<complex<double>>                           512  thr=12  t=   17.987ms  iqr=  0.672ms     59.70 GFLOP/s  [8 real FLOP/cmul]
+
+── Cross: expr-tree overhead ────────────────────────────────────
+et_chain_shallow ET N=1024                           1024  thr= 1  t=    0.000ms  iqr=  0.000ms     16.34 GFLOP/s   174.30 GB/s
+et_chain_shallow raw N=1024                          1024  thr= 1  t=    0.001ms  iqr=  0.000ms      2.82 GFLOP/s    30.03 GB/s  [raw loop baseline]
+et_chain_shallow ET N=16384                         16384  thr= 1  t=    0.005ms  iqr=  0.000ms      9.58 GFLOP/s   102.18 GB/s
+et_chain_shallow raw N=16384                        16384  thr= 1  t=    0.021ms  iqr=  0.000ms      2.33 GFLOP/s    24.82 GB/s  [raw loop baseline]
+et_chain_shallow ET N=65536                         65536  thr= 1  t=    0.182ms  iqr=  0.005ms      1.08 GFLOP/s    11.53 GB/s
+et_chain_shallow raw N=65536                        65536  thr= 1  t=    0.086ms  iqr=  0.000ms      2.28 GFLOP/s    24.33 GB/s  [raw loop baseline]
+et_chain_shallow ET N=1048576                     1048576  thr= 1  t=    0.854ms  iqr=  0.041ms      3.68 GFLOP/s    39.28 GB/s
+et_chain_shallow raw N=1048576                    1048576  thr= 1  t=    1.511ms  iqr=  0.038ms      2.08 GFLOP/s    22.21 GB/s  [raw loop baseline]
+et_chain_deep ET N=16384                            16384  thr= 1  t=    0.246ms  iqr=  0.004ms  [sin(x)+cos(y)*z-exp(z), depth 7]
+et_chain_deep raw N=16384                           16384  thr= 1  t=    0.252ms  iqr=  0.005ms  [raw loop baseline]
+et_chain_deep ET N=262144                          262144  thr= 1  t=    2.033ms  iqr=  0.118ms  [sin(x)+cos(y)*z-exp(z), depth 7]
+et_chain_deep raw N=262144                         262144  thr= 1  t=    3.583ms  iqr=  0.132ms  [raw loop baseline]
+
+── Cross: aliasing detection ────────────────────────────────────
+alias_no-alias N=64                                  4096  thr= 1  t=    0.001ms  iqr=  0.000ms   153.12 GB/s
+alias_aliased   N=64                                 4096  thr= 1  t=    0.001ms  iqr=  0.000ms    89.69 GB/s  [temp alloc + extra copy]
+alias_no-alias N=256                                65536  thr= 1  t=    0.176ms  iqr=  0.100ms     8.92 GB/s
+alias_aliased   N=256                               65536  thr= 1  t=    0.032ms  iqr=  0.001ms    48.88 GB/s  [temp alloc + extra copy]
+alias_no-alias N=1024                             1048576  thr= 1  t=    0.594ms  iqr=  0.087ms    42.36 GB/s
+alias_aliased   N=1024                            1048576  thr= 1  t=    1.276ms  iqr=  0.084ms    19.72 GB/s  [temp alloc + extra copy]
+alias_no-alias N=4096                             16777216  thr= 1  t=    8.477ms  iqr=  0.434ms    47.50 GB/s
+alias_aliased   N=4096                            16777216  thr= 1  t=   56.473ms  iqr=  4.524ms     7.13 GB/s  [temp alloc + extra copy]
+
+── Cross: threadpool overhead ────────────────────────────────────
+threadpool_scal N=8                                     8  thr=12  t=    0.000ms  iqr=  0.000ms     5.12 GB/s
+threadpool_axpy N=8                                     8  thr=12  t=    0.000ms  iqr=  0.000ms     6.86 GB/s
+threadpool_raw  N=8                                     8  thr= 1  t=    0.000ms  iqr=  0.000ms     7.38 GB/s  [single-thread raw loop]
+threadpool_scal N=16                                   16  thr=12  t=    0.000ms  iqr=  0.000ms     9.85 GB/s
+threadpool_axpy N=16                                   16  thr=12  t=    0.000ms  iqr=  0.000ms    13.24 GB/s
+threadpool_raw  N=16                                   16  thr= 1  t=    0.000ms  iqr=  0.000ms    12.80 GB/s  [single-thread raw loop]
+threadpool_scal N=32                                   32  thr=12  t=    0.000ms  iqr=  0.000ms    18.96 GB/s
+threadpool_axpy N=32                                   32  thr=12  t=    0.000ms  iqr=  0.000ms    24.77 GB/s
+threadpool_raw  N=32                                   32  thr= 1  t=    0.000ms  iqr=  0.000ms    19.20 GB/s  [single-thread raw loop]
+threadpool_scal N=64                                   64  thr=12  t=    0.000ms  iqr=  0.000ms    36.57 GB/s
+threadpool_axpy N=64                                   64  thr=12  t=    0.000ms  iqr=  0.000ms    46.55 GB/s
+threadpool_raw  N=64                                   64  thr= 1  t=    0.000ms  iqr=  0.000ms    26.03 GB/s  [single-thread raw loop]
+threadpool_scal N=128                                 128  thr=12  t=    0.000ms  iqr=  0.000ms    66.06 GB/s
+threadpool_axpy N=128                                 128  thr=12  t=    0.000ms  iqr=  0.000ms    85.33 GB/s
+threadpool_raw  N=128                                 128  thr= 1  t=    0.000ms  iqr=  0.000ms    28.98 GB/s  [single-thread raw loop]
+threadpool_scal N=256                                 256  thr=12  t=    0.000ms  iqr=  0.000ms   113.78 GB/s
+threadpool_axpy N=256                                 256  thr=12  t=    0.000ms  iqr=  0.000ms   120.47 GB/s
+threadpool_raw  N=256                                 256  thr= 1  t=    0.000ms  iqr=  0.000ms    35.51 GB/s  [single-thread raw loop]
+threadpool_scal N=512                                 512  thr=12  t=    0.000ms  iqr=  0.000ms   146.29 GB/s
+threadpool_axpy N=512                                 512  thr=12  t=    0.000ms  iqr=  0.000ms   186.18 GB/s
+threadpool_raw  N=512                                 512  thr= 1  t=    0.000ms  iqr=  0.000ms    33.03 GB/s  [single-thread raw loop]
+threadpool_scal N=1024                               1024  thr=12  t=    0.000ms  iqr=  0.000ms   202.27 GB/s
+threadpool_axpy N=1024                               1024  thr=12  t=    0.000ms  iqr=  0.000ms   240.94 GB/s
+threadpool_raw  N=1024                               1024  thr= 1  t=    0.000ms  iqr=  0.000ms    52.07 GB/s  [single-thread raw loop]
+threadpool_scal N=4096                               4096  thr=12  t=    0.000ms  iqr=  0.000ms   420.10 GB/s
+threadpool_axpy N=4096                               4096  thr=12  t=    0.000ms  iqr=  0.000ms   199.80 GB/s
+threadpool_raw  N=4096                               4096  thr= 1  t=    0.002ms  iqr=  0.000ms    53.48 GB/s  [single-thread raw loop]
+threadpool_scal N=16384                             16384  thr=12  t=    0.002ms  iqr=  0.000ms   159.94 GB/s
+threadpool_axpy N=16384                             16384  thr=12  t=    0.002ms  iqr=  0.000ms   206.96 GB/s
+threadpool_raw  N=16384                             16384  thr= 1  t=    0.007ms  iqr=  0.000ms    53.85 GB/s  [single-thread raw loop]
+
+── Cross: parallel scaling ────────────────────────────────────
+parallel_scaling_serial_baseline                      256  thr= 1  t=    0.828ms  iqr=  0.071ms     40.52 GFLOP/s  [below parallel threshold]
+parallel_scaling N=512                                512  thr=12  t=    4.685ms  iqr=  0.376ms     57.30 GFLOP/s
+parallel_scaling N=1024                              1024  thr=12  t=   37.515ms  iqr=  2.202ms     57.24 GFLOP/s
+parallel_scaling N=2048                              2048  thr=12  t=  345.318ms  iqr=  6.237ms     49.75 GFLOP/s
+parallel_scaling N=4096                              4096  thr=12  t= 3847.756ms  iqr=311.412ms     35.72 GFLOP/s
+
+══ Roofline summary ════════════════════════════════
+  Peak memory BW (axpy large N)    :    54.30 GB/s
+  Peak GEMM double (N>=2048)        :    54.07 GFLOP/s
+  Peak GEMM float                  :    69.12 GFLOP/s
+  Ridge point (double)             :     1.00 FLOP/byte
+
+══ Per-section peaks ═══════════════════════════════
+Section               Peak GFLOP/s  Peak BW GB/s
+------------------------------------------------
+Level-1: axpy                68.84        413.04
+Level-1: axpby               33.39        267.13
+Level-1: dot                 12.74        101.92
+Level-1: dotc                11.82         63.02
+Level-1: nrm2                 5.12         20.47
+Level-1: asum                20.84         83.38
+Level-1: scal                27.86        445.82
+Level-1: iamax                0.00         10.88
+Level-2: gemv                30.97        126.79
+Level-2: trsv                23.26         93.02
+Level-2: trmv                21.01         84.05
+Level-2: symv                23.74         96.06
+Level-2: ger                 27.31        112.64
+Level-3: gemm square         70.81          8.03
+Level-3: gemm tall-skinny         53.96          0.00
+Level-3: gemm wide-short         81.30          0.00
+Level-3: gemm transposed         54.73          0.00
+Level-3: trsm                34.50          0.00
+Level-3: syrk                37.78          0.00
+Level-3: herk                87.60          0.00
+Decomp: LU factor            15.32          0.00
+Decomp: LU solve             32.19          0.00
+Decomp: LU det+inv           42.81          0.00
+Decomp: LU full pipeline         69.53          0.00
+Decomp: QR                    9.56          0.00
+Norms: vector                 0.00         58.31
+Norms: matrix                 0.00        159.70
+Cross: layout comparison         64.77          0.00
+Cross: dtype comparison         69.12          0.00
+Cross: expr-tree overhead         16.34        174.30
+Cross: aliasing detection          0.00        153.12
+Cross: threadpool overhead          0.00        420.10
+Cross: parallel scaling         57.30          0.00
