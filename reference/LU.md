@@ -10,6 +10,7 @@ This document covers the implementation of LU algorithm present in, and used by 
 - [Mathematical foundation](#1-mathematical-foundation)
 - [Packed storage](#2-packed-storage-layout)
 - [Algorithm](#3-lu_factor-the-blocked-algorithm)
+- [Public API](#4-public-api)
 ---
 ## 0. Preamble and notation
 Matrices are $m \times n$ with entries in $\mathbb{F} \in \{\mathbb{R}, \mathbb{C}\}$. Elements are denoted either as $A_{ij}$ or as $A(i,j)$ using **0-based indexing throughout**, matching standard C++ array conventions.
@@ -284,3 +285,109 @@ for (size_t jj = j + 1; jj < right_start; ++jj) {
 `sub_copy_in(dst, r0, c0)` copies the rectangular block starting at `(r0, c0)` of $A$ into the fresh `Matrix<T,L>` `dst`. `sub_copy_out(src, r0, c0)` copies it back. These lambdas exist because `trsm` and `gemm` require operands with unit-stride leading dimensions to hit the `raw_mat_info` fast path; a subview of $A$ has `lda = n` (the full matrix width) rather than the block width, which would pass a valid but oversized stride to the BLAS kernel. The copy normalises the stride and eliminates the indirection.
 
 The parallelisation threshold is `PARALLEL_THRESHOLD_SIMPLE / nc` for `RowMajor` storage (each thread handles at least one complete row) and `PARALLEL_THRESHOLD_SIMPLE / nr` for `ColMajor` (at least one complete column), ensuring task granularity remains coarse enough to amortise spawn overhead.
+
+---
+## 4. Public API
+
+### 4.1 `lu()`: the entry point
+```cpp
+template<typename T, Layout L>
+LUResult<T, L> lu(const Matrix<T, L>& A);
+
+template<typename T, Layout L, typename E>
+LUResult<T, L> lu(const MatExpr<E>& e); // Materialises first.
+```
+
+The function makes a copy of $A$ into a working matrix `work`, calls `detail::lu_factor(work)` in-place, then unpacks:
+```cpp
+Matrix<T, L> work = A;
+Vector<size_t> piv = detail::lu_factor(work);
+return LUResult<T, L> {
+    detail::piv_to_P<T, L>(piv, A.rows()),
+    detail::unpack_L<T, L>(work),
+    detail::unpack_U<T, L>(work),
+    std::move(work), // Packed representation.
+    std::move(piv)
+};
+```
+
+The copy is unavoidable: `lu_factor` overwrites its argument with the packed representation, destroying the original values. The `LUResult` struct bundles both the ready factors ($P$, $L$, $U$) and the packed form so that callers can inspect the factors for display or debugging while still using the packed form for efficient solves, without refactoring.
+
+The `MatExpr` overload materialises the expression into a `Matrix<T,L>` first. It cannot accept a `MatrixView` directly because the factorisation requires a contiguous mutable matrix.
+
+### 4.2 `lu_solve()`: single and multiple RHS
+
+**Single RHS.** `lu_solve(res, b)` solves $Ax = b$ by three sequential steps operating entirely on the packed representation:
+```cpp
+// Apply row permutation.
+for (size_t i = 0; i < n; ++i) if (piv[i] != i) std::swap(b[i], b[piv[i]]);
+// Forward substitution: L * x = b (unit lower triangular).
+trsv('L', 'N', 'U', LU, b);
+// Backward substitution: U * x = b (non-unit upper triangular).
+trsv('U', 'N', 'N', LU, b);
+```
+
+**Multiple RHS.** `lu_solve(res, B)` handles a matrix of right-hand sides. The permutation step is parallelised: for each row swap $i \leftrightarrow \text{piv}[i]$, the range of column indices $[0, \text{nrhs})$ is distributed across threads via `parallel_for` with `LINALG_VECTORIZE`. The triangular solves, in turn, are promoted to `trsm` calls:
+```cpp
+for (size_t i = 0; i < n; ++i) {
+    if (piv[i] != i) {
+        const size_t pi = piv[i];
+        parallel_for(nrhs, PARALLEL_THRESHOLD_SIMPLE,
+            [&B, i, pi](size_t s, size_t e) {
+                LINALG_VECTORIZE
+                for (size_t j = s; j < e; ++j)
+                    std::swap(B(i, j), B(pi, j));
+            });
+    };
+};
+// Forward substitution: L * X = PB (unit lower triangular).
+trsm('L', 'L', 'N', 'U', T(1), LU, B);
+// Backward substitution: U * X = (above) (non-unit upper triangular).
+trsm('L', 'U', 'N', 'N', T(1), LU, B);
+```
+
+### 4.3 Determinant computation
+
+**Why log-sum?** The product $\prod_{i=0}^{n-1} U_{ii}$ overflows double precision for $n \gtrsim 700$ when typical diagonal magnitudes exceed $1$. The log-magnitude representation avoids overflow:
+
+$$|\det A| = \exp\!\left(\sum_{i=0}^{n-1} \log|U_{ii}|\right), \quad \det A = \det P \cdot \left(\prod_{i} \operatorname{sign}(U_{ii})\right) \cdot |\det A|$$
+
+The sign, yielded by $\det P$ is $(-1)^{n - c}$ where $c$ is the number of disjoint cycles in the permutation $P$ (cf. the [discussion](#13-the-pivot-vector-and-permutation)). Nature of the entries affects the general algorithm as follows:
+
+- **Real determinant.** The accumulation tracks log-magnitude and the sign of each diagonal entry separately:
+```cpp
+double log_abs = 0.0;
+double diag_sign = 1.0;
+for (size_t i = 0; i < n; ++i) {
+    const double d = static_cast<double>(LU(i, i));
+    if (d == 0.0) return T(0);
+    log_abs += std::log(std::abs(d));
+    if (d < 0.0) diag_sign = -diag_sign;
+};
+return static_cast<T>(perm_sign * diag_sign * std::exp(log_abs));
+```
+
+- **Complex determinant.** For complex $T$, both magnitude and argument must be tracked:
+ 
+$$\log|\det A| = \sum_i \log|U_{ii}|, \qquad \arg(\det A) = \arg(\det P) + \sum_i \arg(U_{ii})$$
+ 
+where $\arg(\det P) = 0$ if `perm_sign > 0` else $\pi$. The reconstruction:
+ 
+$$\det A = e^{\sum \log|U_{ii}|} \cdot e^{i \cdot \arg(\det A)}$$
+ 
+avoids chaining complex multiplications, which would accumulate both magnitude error and argument drift proportional to $n$.
+
+### 4.4 Inverse
+```cpp
+template<typename T, Layout L>
+Matrix<T, L> lu_inverse(const LUResult<T, L>& res);
+```
+
+The inverse is computed by solving $A \cdot X = I$:
+```cpp
+Matrix<T, L> inv = Matrix<T, L>::identity(res.packed.rows());
+lu_solve(res, inv);
+return inv;
+```
+
+Each column of the identity becomes the corresponding column of $A^{-1}$ after the solve. Because the argument is a `Matrix<T,L>`, the multiple-RHS `trsm` path is activated automatically, achieving Level-3 arithmetic intensity. The function requires the input `res` to have been computed for a square matrix (enforced by a `BOUNDS_CHECK` macro).
