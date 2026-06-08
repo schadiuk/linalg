@@ -5,12 +5,12 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - [Overview](#overview)
 - [Features](#features)
 - [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
 - [Core types](#core-types)
 - [Expression templates](#expression-infrastructure)
 - [Operations](#operationsutility-functions)
 - [BLAS](#blas)
 - [Matrix decompositions](#decompositions)
-- [Quick start](#quick-start)
 ---
 ## Overview
 `linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
@@ -45,6 +45,36 @@ g++ -std=c++20 -march=native -O2 my_file.cpp
 - Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed).
 ```
 g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize my_file.cpp
+```
+---
+## Quick start
+```cpp
+#include <linalg.hpp> // Umbrella header.
+#include <iostream>
+
+using namespace linalg; // All library classes and functions are enclosed in the namespace.
+
+int main() {
+    // Generate sample (trivial) matrix and RHS vector.
+    auto A = Matrix<double>::identity(3);
+    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
+
+    // Expression templates.
+    Vector<double> v = A * b;
+    std::cout << "v = " << v << "\n";
+    Vector<double> w = 2.0 * b + v;
+    std::cout << "w = " << w << "\n";
+
+    // Decomposition.
+    auto lu_res = lu(A);
+    Vector<double> sol = b;
+
+    lu_solve(lu_res, sol); // In-place solution of A * x = b.
+
+    std::cout << "Solution: " << sol << "\n";
+    std::cout << "Residual norm: " << norm(A * sol - b) << "\n";
+    return 0;
+};
 ```
 ---
 ## Core types
@@ -246,35 +276,6 @@ res.piv // Pivot indices (for pivoted QR).
 res.rank  // Estimated numerical rank (pivoted only; -1 otherwise).
 res.pivoted // true if pivoting was enabled.
 ```
-*Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference].
+*Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference](/reference/QR.md).
 
 ---
-## Quick start
-```cpp
-#include <linalg.hpp> // Umbrella header.
-#include <iostream>
-
-using namespace linalg; // All library classes and functions are enclosed in the namespace.
-
-int main() {
-    // Generate sample (trivial) matrix and RHS vector.
-    auto A = Matrix<double>::identity(3);
-    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
-
-    // Expression templates.
-    Vector<double> v = A * b;
-    std::cout << "v = " << v << "\n";
-    Vector<double> w = 2.0 * b + v;
-    std::cout << "w = " << w << "\n";
-
-    // Decomposition.
-    auto lu_res = lu(A);
-    Vector<double> sol = b;
-
-    lu_solve(lu_res, sol); // In-place solution of A * x = b.
-
-    std::cout << "Solution: " << sol << "\n";
-    std::cout << "Residual norm: " << norm(A * sol - b) << "\n";
-    return 0;
-};
-```

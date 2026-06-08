@@ -6,7 +6,7 @@
 namespace linalg {
     enum class QRMode {Reduced, Complete, R};
 
-    // Publicly-visible decomposition package
+    // Publicly-visible QR decomposition package.
     template<typename T, Layout LL>
     struct QRResult {
         Matrix<T, LL> P;
@@ -19,7 +19,7 @@ namespace linalg {
 
     namespace detail {
         constexpr size_t QR_BLOCK = 64;
-        // Returns pair (v, beta): (I - beta*v*v^H)*x = norm(x)*sign(x[0])*e_0
+        // Returns pair (v, beta): (I - beta*v*v^H)*x = norm(x)*sign(x[0])*e_0.
         template<typename T>
         LINALG_INLINE std::pair<Vector<T>, double> householder_reflector(const Vector<T>& x) {
             const size_t n = x.size();
@@ -56,18 +56,18 @@ namespace linalg {
             const T b = static_cast<T>(beta);
             const size_t lda = W.stride();
             T* const W_base = W.data() + k * lda + k;
-            // Materialise conj(v) for the transposed GEMV
+            // Materialise conj(v) for the transposed GEMV.
             Vector<T> cv(len);
             const T* LINALG_RESTRICT vp = detail::assume_aligned<64>(v.data());
             T* LINALG_RESTRICT cp = detail::assume_aligned<64>(cv.data());
             LINALG_VECTORIZE for (size_t i = 0; i < len; ++i) cp[i] = linalg::conj(vp[i]);
-            // Step 1: w = W_sub^T * cv (layout-flipped raw GEMV)
+            // Step 1: w = W_sub^T * cv (layout-flipped raw GEMV).
             Vector<T> w(ncols, T(0));
             if constexpr (L == Layout::RowMajor)
                 kernels::gemv_kernel_col(T(1), W_base, lda, cv.data(), size_t(1), T(0), w.data(), ncols, len);
             else
                 kernels::gemv_kernel_row(T(1), W_base, lda, cv.data(), size_t(1), T(0), w.data(), ncols, len);
-            // Step 2: W_sub -= beta * v * w^T  (GER; conj already absorbed in w via cv)
+            // Step 2: W_sub -= beta * v * w^T  (GER; conj already absorbed in w via cv).
             MatrixView<T, L, false, false, true> W_sub(W_base, len, ncols, lda);
             ger(-b, v, w, W_sub);
         };
@@ -80,20 +80,20 @@ namespace linalg {
             const T b = static_cast<T>(beta);
             const size_t lda = Q.stride();
             T* const Q_base = Q.data() + (L == Layout::RowMajor ? k : k * lda);
-            // Step 1: w = Q_sub * v
+            // Step 1: w = Q_sub * v.
             Vector<T> w(m, T(0));
             if constexpr (L == Layout::RowMajor)
                 kernels::gemv_kernel_row(T(1), Q_base, lda, v.data(), size_t(1), T(0), w.data(), m, len);
             else
                 kernels::gemv_kernel_col(T(1), Q_base, lda, v.data(), size_t(1), T(0), w.data(), m, len);
-            // Step 2: Q_sub -= beta * w * v^H  (GERC)
+            // Step 2: Q_sub -= beta * w * v^H  (GERC).
             MatrixView<T, L, false, false, true> Q_sub(Q_base, m, len, lda);
-            const VectorView<T, false> v_active(v.data(), len); // Window onto v[0:len]
+            const VectorView<T, false> v_active(v.data(), len); // Window onto v[0:len].
             gerc(-b, w, v_active, Q_sub);
         };
 
         // larft: given n Householder vectors with associated betas builds n*n upper triangular WY T-matrix such that:
-        // H_k * H_{k+1} *...* H_{k+n-1}  =  I − V * T * V^H
+        // H_k * H_{k+1} *...* H_{k+n-1} = I − V * T^H * V^H.
         template<typename T, Layout L>
         Matrix<T, L> larft(const std::vector<Vector<T>>& vs, const std::vector<double>& betas, size_t k, size_t n) {
             Matrix<T, L> T_mat(n, n, T(0));
@@ -113,7 +113,7 @@ namespace linalg {
                         dp += conj(vl[offset + ii]) * vj[ii];
                     z[l] = -static_cast<T>(betas[k + j]) * dp;
                 };
-                // T[0:j, j] = T[0:j, 0:j] * z  (upper-triangular matrix-vector product)
+                // T[0:j, j] = T[0:j, 0:j] * z (upper-triangular matrix-vector product).
                 for (size_t l = 0; l < j; ++l) {
                     T acc = T(0);
                     for (size_t ll = l; ll < j; ++ll) acc += T_mat(l, ll) * z[ll];
@@ -123,7 +123,7 @@ namespace linalg {
             return T_mat;
         };
 
-        // Compact-WY trailing update
+        // Compact-WY trailing update.
         template<typename T, Layout L>
         void apply_wy_left(Matrix<T, L>& W, const std::vector<Vector<T>>& vs, const Matrix<T, L>& T_mat, size_t k, size_t nb, size_t j0) {
             const size_t m = W.rows();
@@ -131,14 +131,14 @@ namespace linalg {
             const size_t len = m - k;
             const size_t ncols_trail = (j0 < n) ? n - j0 : 0;
             if (ncols_trail == 0 || len == 0 || nb == 0) return;
-            // Build V: (m-k)*nb.  V[i,j] = vs[k+j][i] for i < vs[k+j].size(), else 0
+            // Build V: (m-k)*nb.  V[i,j] = vs[k+j][i] for i < vs[k+j].size(), else 0.
             Matrix<T, L> V(len, nb, T(0));
             for (size_t j = 0; j < nb; ++j) {
                 const Vector<T>& vj = vs[k + j];
-                //LINALG_VECTORIZE // Discarded by compiler.
+                //LINALG_VECTORIZE // Discarded by g++ compiler.
                 for (size_t i = 0; i < vj.size(); ++i) V(i + j, j) = vj[i];
             };
-            // Extract W_trail: W[k:m, j0:n] ->  temporary (m-k) * ncols_trail
+            // Extract W_trail: W[k:m, j0:n] ->  temporary (m-k) * ncols_trail.
             const size_t copy_thresh = std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (ncols_trail + 1));
             Matrix<T, L> W_trail(len, ncols_trail);
             parallel_for(len, copy_thresh, [&](size_t rs, size_t re) {
@@ -146,15 +146,15 @@ namespace linalg {
                     for (size_t jj = 0; jj < ncols_trail; ++jj)
                         W_trail(i, jj) = W(k + i, j0 + jj);
             });
-            // GEMM 1: C = V^H * W_trail  (nb * ncols_trail)
+            // GEMM 1: C = V^H * W_trail  (nb * ncols_trail).
             Matrix<T, L> C(nb, ncols_trail, T(0));
             gemm(T(1), hermitian(V), expr(W_trail), T(0), C);
-            // GEMM 2: TC = T_mat * C  (nb * ncols_trail)
+            // GEMM 2: TC = T_mat * C  (nb * ncols_trail).
             Matrix<T, L> TC(nb, ncols_trail, T(0));
             gemm(T(1), hermitian(T_mat), expr(C), T(0), TC);
-            // GEMM 3: W_trail -= V * TC
+            // GEMM 3: W_trail -= V * TC.
             gemm(-T(1), expr(V), expr(TC), T(1), W_trail);
-            // Write W_trail back into W[k:m, j0:n]
+            // Write W_trail back into W[k:m, j0:n].
             parallel_for(len, copy_thresh, [&](size_t rs, size_t re) {
                 for (size_t i = rs; i < re; ++i)
                     for (size_t jj = 0; jj < ncols_trail; ++jj)
@@ -163,7 +163,7 @@ namespace linalg {
         };
     };
 
-    //pivot vector -> permutation matrix (in A*P=Q*R convertion)
+    // Pivot vector -> permutation matrix (in A * P = Q * R convention).
     template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> piv_to_P(const Vector<size_t>& piv) {
         const size_t n = piv.size();
@@ -181,7 +181,12 @@ namespace linalg {
         return piv_to_P<T, L>(res.piv);
     };
 
-    // Householder QR with optional column pivoting
+    /// @brief Householder QR decomposition.
+    /// @param A Matrix to be decomposed.
+    /// @param mode Algorithm mode (default is Reduced).
+    /// @param pivoting Pivoting flag for rank-revealing factorisation.
+    /// @param tol Rank-detection tolerance.
+    /// @return `QRResult` structure.
     template<typename T, Layout L = Layout::RowMajor>
     QRResult<T, L> qr(const Matrix<T, L>& A, QRMode mode = QRMode::Reduced, bool pivoting = false, double tol = -1.0) {
         const size_t m = A.rows();
@@ -196,17 +201,17 @@ namespace linalg {
         if (pivoting)
             for (size_t j = 0; j < n; ++j)
                 col_norms[j] = detail::col_norm_sq(W, j, 0);
-        // Auto-tolerance
+        // Auto-tolerance:
         if (tol < 0.0) {
             const double amax = norm(A, "inf");
             tol = static_cast<double>(std::max(m, n)) * std::numeric_limits<double>::epsilon() * amax;
         };
         int rank_est = 0;
-        // Blocked WY path (non-pivoted, K > QR_BLOCK)
+        // Blocked WY path (non-pivoted, K > QR_BLOCK).
         if (!pivoting && K > detail::QR_BLOCK) {
             for (size_t k = 0; k < K; k += detail::QR_BLOCK) {
                 const size_t nb = std::min(detail::QR_BLOCK, K - k);
-                // Panel factorisation
+                // Panel factorisation.
                 for (size_t j = 0; j < nb; ++j) {
                     const size_t kj  = k + j;
                     const size_t len = m - kj;
@@ -215,27 +220,26 @@ namespace linalg {
                     auto [v, beta] = detail::householder_reflector(x);
                     vs[kj] = v;
                     betas[kj] = beta;
-                    // Apply only to panel columns [kj, k+nb)  (ncols = nb−j includes kj)
+                    // Apply only to panel columns [kj, k+nb) (ncols = nb−j includes kj).
                     detail::apply_householder_left(W, v, beta, kj, len, nb - j);
-                    // Enforce exact zeros below the diagonal
+                    // Enforce exact zeros below the diagonal.
                     for (size_t i = kj + 1; i < m; ++i) W(i, kj) = T(0);
                 };
                 rank_est += static_cast<int>(nb);
     
-                // Build compact T-matrix
+                // Build compact T-matrix.
                 const Matrix<T, L> T_mat = detail::larft<T, L>(vs, betas, k, nb);
-                // WY trailing update: W[k:m, k+nb:n] <- (I−V*T*V^H) * W_trail
+                // WY trailing update: W[k:m, k+nb:n] <- (I−V*T*V^H) * W_trail.
                 detail::apply_wy_left(W, vs, T_mat, k, nb, k + nb);
             };
         }
-        // Unblocked Level-2 path (pivoted or K <= QR_BLOCK)
+        // Unblocked Level-2 path (pivoted or K <= QR_BLOCK).
         else {
-            // Incremental norm-update stability threshold (LAPACK DLAQP2 value)
             static constexpr double RECOMPUTE_THRESH = 1.49e-8; // ~sqrt(std::numeric_limits<double>::epsilon())
             for (size_t k = 0; k < K; ++k) {
                 const size_t len = m - k;
                 const size_t ncols = n - k;
-                // Column pivoting: find and swap in the maximum-norm residual column
+                // Column pivoting: find and swap in the maximum-norm residual column.
                 if (pivoting) {
                     size_t pivot_col = k;
                     double best = col_norms[k];
@@ -249,17 +253,17 @@ namespace linalg {
                     if (std::sqrt(col_norms[k]) <= tol) break;
                 };
                 ++rank_est;
-                // Compute Householder reflector for W[k:m, k]
+                // Compute Householder reflector for W[k:m, k].
                 Vector<T> x(len);
                 for (size_t i = 0; i < len; ++i) x[i] = W(k + i, k);
                 auto [v, beta] = detail::householder_reflector(x);
                 vs[k] = v;
                 betas[k] = beta;
-                // Apply to W[k:m, k:n]
+                // Apply to W[k:m, k:n].
                 detail::apply_householder_left(W, v, beta, k, len, ncols);
-                // Enforce exact zeros below the diagonal
+                // Enforce exact zeros below the diagonal.
                 for (size_t i = k + 1; i < m; ++i) W(i, k) = T(0);
-                // Incremental squared-norm update with recompute guard
+                // Incremental squared-norm update with recompute guard:
                 if (pivoting) {
                     for (size_t j = k + 1; j < n; ++j) {
                         const double rkj_sq = std::norm(W(k, j));
@@ -270,15 +274,14 @@ namespace linalg {
                 };
             };
         };
-        // Extract R
+        // Extract R.
         const size_t r_rows = (mode == QRMode::Complete) ? m : K;
         Matrix<T, L> R(r_rows, n, T(0));
         for (size_t i = 0; i < r_rows && i < m; ++i)
             LINALG_VECTORIZE
             for (size_t j = i; j < n; ++j)
                 R(i, j) = W(i, j);
-        // Q accumulation: builds Q = H_0*H_1*…*H_{K-1} by initialising Q = I_{m*q_cols} and
-        // successively left-multiplying by each H_k in reverse order
+        // Q accumulation.
         Matrix<T, L> Q(0, 0);
         if (mode != QRMode::R) {
             const size_t q_cols = (mode == QRMode::Complete) ? m : K;
@@ -288,12 +291,11 @@ namespace linalg {
             for (int ki = static_cast<int>(K) - 1; ki >= 0; --ki) {
                 const size_t k = static_cast<size_t>(ki);
                 if (betas[k] == 0.0) continue;
-                const size_t len = m - k; // full reflector
-                const size_t ncols = q_cols - k; // columns of Q to update
+                const size_t len = m - k; // Full reflector.
+                const size_t ncols = q_cols - k; // Columns of Q to update.
                 detail::apply_householder_left(Q, vs[k], betas[k], k, len, ncols);
             };
         };
-        // Result
         return QRResult<T, L>{
             piv_to_P<T, L>(piv),
             std::move(Q),
@@ -304,28 +306,46 @@ namespace linalg {
         };
     };
 
-    // Materialising overload for MatExpr
     template<typename T, Layout L, typename E>
     QRResult<T, L> qr(const MatExpr<E>& e) {
         return qr(Matrix<T, L>(e));
     };
-    // Convenience wrappers
+
+    /// @brief Reduced QR decomposition.
+    /// @param A Matrix to be decomposed.
+    /// @return `QRResult` structure.
     template<typename T, Layout L>
     QRResult<T, L> qr_reduced(const Matrix<T, L>& A) { 
         return qr(A, QRMode::Reduced,  false);
     };
-    
+    /// @brief Householder QR decomposition.
+    /// @param A Matrix to be decomposed.
+    /// @param mode Algorithm mode (default is Reduced).
+    /// @param pivoting Pivoting flag for rank-revealing factorisation.
+    /// @param tol Rank-detection tolerance.
+    /// @return `QRResult` structure.
+
+    /// @brief Completed QR factorisation.
+    /// @param A Matrix to be decomposed.
+    /// @return `QRResult` structure.
     template<typename T, Layout L>
     QRResult<T, L> qr_complete(const Matrix<T, L>& A) { 
         return qr(A, QRMode::Complete, false);
     };
     
-    // R-only: Q accumulation is skipped entirely
+    /// @brief R-only acquisition.
+    /// @param A Matrix to be decomposed.
+    /// @return `QRResult` structure.
     template<typename T, Layout L>
     QRResult<T, L> qr_r(const Matrix<T, L>& A) { 
         return qr(A, QRMode::R, false);
     };
-    // Column-pivoted rank-revealing QR
+
+    /// @brief  Column-pivoted rank-revealing QR decomposition.
+    /// @param A Matrix to be factorised.
+    /// @param tol Rank-detection tolerance.
+    /// @return `QRResult` structure.
+    /// @note Passing negative value as `tol` triggers auto-tolerance.
     template<typename T, Layout L>
     QRResult<T, L> qr_pivoted(const Matrix<T, L>& A, double tol = -1.0) {
         return qr(A, QRMode::Reduced, true, tol);
