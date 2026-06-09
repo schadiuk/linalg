@@ -4,12 +4,14 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 ## Table of contents
 - [Overview](#overview)
 - [Features](#features)
+- [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
+- [Quick start](#quick-start)
 - [Core types](#core-types)
 - [Expression templates](#expression-infrastructure)
 - [Operations](#operationsutility-functions)
 - [BLAS](#blas)
-- [Quick start](#quick-start)
+- [Matrix decompositions](#decompositions)
 ---
 ## Overview
 `linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
@@ -23,6 +25,18 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - **Aligned storage**: every allocation is 64-byte aligned by means of `AlignedAllocator`, enabling auto-vectorisation.
 - **Copy-free views**: `VectorView` and `MatrixView` provide zero-overhead windows, transpositions and conjugations.
 - **Complex support**: all operations are designed to support `float`, `double`, and their `std::complex` counterparts.
+
+---
+## Documentation
+
+The library features rich documentation: Doxygen-like comment blocks (natively supported by IntelliSense), detailed syntax overview placed in README, and comprehensive reference covering algorithm-heavy aspects. The text documents are available at the dedicated `reference` folder, and are organised as follows:
+- [BLAS](/reference/BLAS.md)
+- [LU decomposition](/reference/LU.md)
+- [QR decomposition](/reference/QR.md)
+
+*Note:* the format chosen is Markdown, supported by GitHub and a number of modern IDEs and editors (including [VS Code](https://code.visualstudio.com/docs/languages/markdown) - the one used in development). For easier understanding of the algorithms, it is recommended not to rely on GitHub website's rendering of formulas (some of which may be parsed incorrectly).
+
+
 ---
 ## Prerequisites
 | Requirement | Minimum |
@@ -44,6 +58,36 @@ g++ -std=c++20 -march=native -O2 my_file.cpp
 - Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed).
 ```
 g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize my_file.cpp
+```
+---
+## Quick start
+```cpp
+#include <linalg.hpp> // Umbrella header.
+#include <iostream>
+
+using namespace linalg; // All library classes and functions are enclosed in the namespace.
+
+int main() {
+    // Generate sample (trivial) matrix and RHS vector.
+    auto A = Matrix<double>::identity(3);
+    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
+
+    // Expression templates.
+    Vector<double> v = A * b;
+    std::cout << "v = " << v << "\n";
+    Vector<double> w = 2.0 * b + v;
+    std::cout << "w = " << w << "\n";
+
+    // Decomposition.
+    auto lu_res = lu(A);
+    Vector<double> sol = b;
+
+    lu_solve(lu_res, sol); // In-place solution of A * x = b.
+
+    std::cout << "Solution: " << sol << "\n";
+    std::cout << "Residual norm: " << norm(A * sol - b) << "\n";
+    return 0;
+};
 ```
 ---
 ## Core types
@@ -117,7 +161,7 @@ Other operations, supported by the expression infrastructure.
 | Upper triangle extraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
 | Lower triangle extraction | `tril(A, k)` | k-offset, default is 0. |
 
-*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised `gemm` BLAS call instead.
+*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised [`gemm` BLAS](/reference/BLAS.md#gemm-general-matrix-matrix-product) call instead.
 ### Wrapping in expressions
 Optionally use `expr()` to wrap a storage object so it participates expression algebra:
 ```cpp
@@ -188,34 +232,63 @@ The existing routines follow standard 3-level convention:
 
 *Note:* for in-depth coverage of BLAS cf. the [dedicated reference](reference/BLAS.md).
 
+---
+## Decompositions
+The library provides common matrix factorisations, naturally integrated with the expression template and BLAS machinery.
+
+### LU decomposition
+Blocked LU with partial pivoting. For original matrix $A$ finds $P$, $L$, $U$ such that: $PA = LU$. *Note:* for detailed account of the algorithm cf. the [reference](reference/LU.md).
+
+The `lu()` function returns `P`, `L`, `U`, the packed representation, and the pivot vector:
+```cpp
+auto res = lu(A); // LUResult<T, L> - dedicated structure.
+ 
+res.P // Permutation matrix.
+res.L // Unit lower triangular factor.
+res.U // Upper triangular factor.
+res.packed // In-place storage (strict-L below diagonal, U on/above).
+res.piv // Pivot indices.
+ 
+// Connected functions:
+Vector<double> b;
+lu_solve(res, b); // Solve A * x = b  (single RHS, in-place)
+
+Matrix<double> B;
+lu_solve(res, B); // Solve A * X = B  (multiple RHS, in-place)
+
+double d = lu_det(res); // Determinant.
+
+auto Ainv = lu_inverse(res); // Inverse.
+```
+
+
+### QR factorisation
+Householder QR with optional column pivoting. Uses a blocked compact-WY update for large matrices. Finds matrices satisfying: $AP = QR$ (note the column permutation - opposite convention from LU).
+
+`qr()` master function accepts a range of `QRMode` values:
+| Value | Q shape | Use case |
+|---|---|---|
+| `QRMode::Reduced` | m * min(m,n) | Default; economy decomposition. |
+| `QRMode::Complete` | m * m | Full orthonormal basis. |
+| `QRMode::R` |  | R only; fastest. |
+```cpp
+// Modes:
+auto res = qr(A); // Reduced QR (default).
+auto res = qr_complete(A); // Full Q.
+auto res = qr_r(A); // R only - Q not formed.
+auto res = qr_pivoted(A); // Column-pivoted.
+auto res = qr_pivoted(A, tol); // With explicit rank tolerance set.
+ 
+// Fine-grained control, returns QRResult<T, L>.
+auto res = qr(A, QRMode::Reduced, /*pivoting=*/true, /*tol=*/-1.0);
+ 
+res.Q // Orthonormal factor (m * min(m,n) for Reduced).
+res.R // Upper triangular factor.
+res.P // Permutation matrix (for pivoted QR: A * P = Q * R).
+res.piv // Pivot indices (for pivoted QR).
+res.rank  // Estimated numerical rank (pivoted only; -1 otherwise).
+res.pivoted // true if pivoting was enabled.
+```
+*Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference](/reference/QR.md).
 
 ---
-## Quick start
-```cpp
-#include <linalg.hpp> // Umbrella header.
-#include <iostream>
-
-using namespace linalg; // All library classes and functions are enclosed in the namespace.
-
-int main() {
-    // Generate sample (trivial) matrix and RHS vector.
-    auto A = Matrix<double>::identity(3);
-    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
-
-    // Expression templates.
-    Vector<double> v = A * b;
-    std::cout << "v = " << v << "\n";
-    Vector<double> w = 2.0 * b + v;
-    std::cout << "w = " << w << "\n";
-
-    // Decomposition.
-    auto lu_res = lu(A);
-    Vector<double> sol = b;
-
-    lu_solve(lu_res, sol); // In-place solution of A * x = b.
-
-    std::cout << "Solution: " << sol << "\n";
-    std::cout << "Residual norm: " << norm(A * sol - b) << "\n";
-    return 0;
-};
-```

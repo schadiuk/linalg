@@ -5,22 +5,21 @@
 constexpr size_t LU_BLOCK = 64;
 
 namespace linalg {
-    // LUResult bundles the publicly-visible decomposition (P, L, U) together with the internal packed representation used by the solvers
+    // The structure bundles the publicly-visible decomposition (P, L, U) together with the internal packed representation used by the solvers.
     template<typename T, Layout LL>
     struct LUResult {
-        Matrix<T, LL> P; // Permutation matrix: P * A = L * U
-        Matrix<T, LL> L; // m*min(m,n) unit lower triangular factor
-        Matrix<T, LL> U; // min(m,n)*n upper triangular factor
-        Matrix<T, LL> packed; // In-place storage: strict lower L, upper U
-        Vector<size_t> piv; // piv[j] = row swapped with row j at step j
+        Matrix<T, LL> P; // Permutation matrix: P * A = L * U.
+        Matrix<T, LL> L; // m*min(m,n) unit lower triangular factor.
+        Matrix<T, LL> U; // min(m,n)*n upper triangular factor.
+        Matrix<T, LL> packed; // In-place storage: strict lower L, upper U.
+        Vector<size_t> piv; // piv[j] = row swapped with row j at step j.
     };
 
     namespace detail {
-        // Blocked LU with partial pivoting
-        // Algorithm per block column k:
-        // 1. Unblocked panel LU on A[k:m, k:k+kb] with partial pivoting. Row swaps are applied to the full row (0:n) so previously-factored blocks are kept consistent
-        // 2. Panel trsm: solve L_panel * U12 = A[k:k+kb, k+kb:n]
-        // 3. Schur complement: A[k+kb:m, k+kb:n] -= L21 * U12
+        // Blocked LU with partial pivoting. Algorithm per block column k:
+        // 1. Unblocked panel LU on A[k:m, k:k+kb] with partial pivoting. Row swaps are applied to the full row (0:n) so previously-factored blocks are kept consistent.
+        // 2. Panel trsm: solve L_panel * U12 = A[k:k+kb, k+kb:n].
+        // 3. Schur complement: A[k+kb:m, k+kb:n] -= L21 * U12.
         template<typename T, Layout L>
         Vector<size_t> lu_factor(Matrix<T, L>& A) {
             const size_t m = A.rows();
@@ -30,7 +29,7 @@ namespace linalg {
             const size_t lda = A.stride();
             Vector<size_t> piv(mn);
             for (size_t i = 0; i < mn; ++i) piv[i] = i;
-            // Parallelised submatrix copy helpers
+            // Parallelised submatrix copy helpers:
             auto sub_copy_in = [&](Matrix<T, L>& dst, size_t r0, size_t c0) {
                 const size_t nr = dst.rows(), nc = dst.cols();
                 if constexpr (L == Layout::RowMajor) {
@@ -72,9 +71,9 @@ namespace linalg {
             for (size_t k = 0; k < mn; k += LU_BLOCK) {
                 const size_t kb = std::min(LU_BLOCK, mn - k);
                 const size_t right_start = k + kb;
-                // Unblocked panel LU
+                // Unblocked panel LU.
                 for (size_t j = k; j < right_start; ++j) {
-                    // Pivot search: find max abs(A(i,j)) for i in [j, m)
+                    // Pivot search: find max abs(A(i,j)) for i in [j, m).
                     size_t pr = j;
                     auto  mx = std::abs(static_cast<T>(A(j, j)));
                     for (size_t i = j + 1; i < m; ++i) {
@@ -82,7 +81,7 @@ namespace linalg {
                         if (v > mx) { mx = v; pr = i; };
                     };
                     piv[j] = pr;
-                    // Full-row swap: applied to columns 0:n
+                    // Full-row swap: applied to columns 0:n.
                     if (pr != j)
                         if constexpr (L == Layout::RowMajor) {
                             T* LINALG_RESTRICT rj = ap + j  * lda;
@@ -100,7 +99,7 @@ namespace linalg {
                                         std::swap(ap[jj*lda + j], ap[jj*lda + pr]);
                                 });
                         };
-                    // Scale sub-diagonal entries
+                    // Scale sub-diagonal entries.
                     const T diag = static_cast<T>(A(j, j));
                     if (diag != T(0)) {
                         const T inv = T(1) / diag;
@@ -113,7 +112,7 @@ namespace linalg {
                             for (size_t i = j + 1; i < m; ++i) col_j[i] *= inv;
                         };
                     };
-                    // Rank-1 update of the remaining panel columns within block
+                    // Rank-1 update of the remaining panel columns within block.
                     if constexpr (L == Layout::RowMajor) {
                         const T* LINALG_RESTRICT pivot_row = ap + j * lda;
                         for (size_t i = j + 1; i < m; ++i) {
@@ -137,8 +136,8 @@ namespace linalg {
  
                 if (right_start >= n) continue;
                 const size_t right_cols = n - right_start;
-                // Panel trsm: L_panel * U12 = A[k:right_start, right_start:n]
-                // The extracted panel contains both L (below) and U (on/above) in packed form
+                // Panel trsm: L_panel * U12 = A[k:right_start, right_start:n].
+                // The extracted panel contains both L (below) and U (on/above) in packed form.
                 Matrix<T, L> panel(kb, kb);
                 for (size_t i = 0; i < kb; ++i)
                     for (size_t j = 0; j < kb; ++j)
@@ -150,18 +149,18 @@ namespace linalg {
                 if (right_start >= m) continue;
                 const size_t below_rows = m - right_start;
 
-                // Schur complement
+                // Schur complement:
                 Matrix<T, L> L21(below_rows, kb);
-                Matrix<T, L> C  (below_rows, right_cols);
+                Matrix<T, L> C (below_rows, right_cols);
                 sub_copy_in(L21, right_start, k);
-                sub_copy_in(C,   right_start, right_start);
+                sub_copy_in(C, right_start, right_start);
                 gemm(T(-1), L21, U12, T(1), C);
                 sub_copy_out(C, right_start, right_start);
             };
             return piv;
         };
  
-        // Reconstructs the permutation matrix
+        // Helper that reconstructs the permutation matrix.
         template<typename T, Layout L>
         LINALG_INLINE Matrix<T, L> piv_to_P(const Vector<size_t>& piv, size_t m) {
             Matrix<T, L> P = Matrix<T, L>::identity(m);
@@ -223,7 +222,9 @@ namespace linalg {
         };
     }; 
 
-    // Public API for LU factorisation
+    /// @brief LU factorisation.
+    /// @param A Matrix to be decomposed.
+    /// @return `LUResult` structure: the decomposition (P, L, U) together with packed representation.
     template<typename T, Layout L>
     LUResult<T, L> lu(const Matrix<T, L>& A) {
         Matrix<T, L> work = A;
@@ -242,22 +243,26 @@ namespace linalg {
         return lu(Matrix<T, L>(e));
     };
 
-    // Single RHS solver
+    /// @brief Solution of `A * x = b`.
+    /// @param res `LUResult` instance.
+    /// @param b RHS vector (overwritten by solution).
     template<typename T, Layout L>
     void lu_solve(const LUResult<T, L>& res, Vector<T>& b) {
         const auto& LU = res.packed;
         const auto& piv = res.piv;
         const size_t n = LU.rows();
         BOUNDS_CHECK(n == LU.cols() && n == b.size() && piv.size() == n);
-        // Apply row permutation: b <- Pb
+        // Apply row permutation: b <- Pb.
         for (size_t i = 0; i < n; ++i) if (piv[i] != i) std::swap(b[i], b[piv[i]]);
-        // Forward substitution: L*x = b (unit lower triangular)
+        // Forward substitution: L*x = b (unit lower triangular).
         trsv('L', 'N', 'U', LU, b);
-        // Backward substitution: U*x = b (non-unit upper triangular)
+        // Backward substitution: U*x = b (non-unit upper triangular).
         trsv('U', 'N', 'N', LU, b);
     };
 
-    // Multiple RHS
+    /// @brief Solution of `A * x = B`.
+    /// @param res `LUResult` instance.
+    /// @param B RHS input (overwritten by solution).
     template<typename T, Layout L>
     void lu_solve(const LUResult<T, L>& res, Matrix<T, L>& B) {
         const auto& LU = res.packed;
@@ -266,8 +271,7 @@ namespace linalg {
         const size_t nrhs = B.cols();
         BOUNDS_CHECK(n == LU.cols() && n == B.rows() && piv.size() == n);
         // Apply row permutation to B: swap row i with row piv[i] for all columns.
-        // For large nrhs the column loop is parallelised; threshold prevents
-        // task-spawn overhead for small systems.
+        // For large nrhs the column loop is parallelised; threshold prevents task-spawn overhead for small systems.
         for (size_t i = 0; i < n; ++i) {
             if (piv[i] != i) {
                 const size_t pi = piv[i];
@@ -279,25 +283,22 @@ namespace linalg {
                     });
             };
         };
-        // Forward substitution: L*X = PB (unit lower triangular)
+        // Forward substitution: L*X = PB (unit lower triangular).
         trsm('L', 'L', 'N', 'U', T(1), LU, B);
-        // Backward substitution: U*X = (above) (non-unit upper triangular)
+        // Backward substitution: U*X = (above) (non-unit upper triangular).
         trsm('L', 'U', 'N', 'N', T(1), LU, B);
     };
 
-    // Determinant via log-magnitude accumulation
+    /// @brief Determinant computation.
+    /// @param res `LUResult` instance.
+    /// @return The determinant (type corresponds with that of matrix with `res` decomposition).
     template<typename T, Layout L>
     T lu_det(const LUResult<T, L>& res) {
         const auto& LU = res.packed;
         const auto& piv = res.piv;
         const size_t n = LU.rows();
         BOUNDS_CHECK(n == LU.cols());
-        // Sign of the permutation
-/*        
-        int swaps = 0;
-        for (size_t i = 0; i < piv.size(); ++i) if (piv[i] != i) ++swaps;
-        const double perm_sign = (swaps % 2 == 0) ? 1.0 : -1.0;
-*/
+        // Sign of the permutation.
         std::vector<bool> visited(n, false);
         int cycles = 0;
         for (size_t i = 0; i < n; ++i) {
@@ -331,7 +332,9 @@ namespace linalg {
         };
     };
 
-    // Inverse: delegates to lu_solve(LU, I)
+    /// @brief Matrix inverse computation.
+    /// @param res `LUResult` instance (original matrix must be square).
+    /// @return Corresponding right inverse.
     template<typename T, Layout L>
     Matrix<T, L> lu_inverse(const LUResult<T, L>& res) {
         BOUNDS_CHECK(res.packed.rows() == res.packed.cols());
