@@ -65,7 +65,7 @@ which is unit lower triangular with $L_{ij} = \ell_{ij}$ for $i > j$. This gives
 
 $$PA = LU$$
 
-The Frobenius matrices $M_j$ are recomputed after each swap, ensuring $|L_{ij}| \leq 1$ for all $i > j$ — a consequence of dividing by the maximum element in the column.
+The Frobenius matrices $M_j$ are recomputed after each swap, ensuring $|L_{ij}| \leq 1$ for all $i > j$ - a consequence of dividing by the maximum element in the column.
 
 ***General $m \times n$ case.*** For $m \times n$ matrices, $k = \min(m,n)$ elimination steps suffice. $L \in \mathbb{F}^{m \times k}$ is $m \times k$ unit lower triangular, $U \in \mathbb{F}^{k \times n}$ is $k \times n$ upper triangular, and $P \in \mathbb{F}^{m \times m}$ is an $m \times m$ permutation. The identity $PA = LU$ holds exactly.
 
@@ -101,7 +101,7 @@ return P;
 
 accumulates the permutation by applying each swap to the current $P$ in order. This is equivalent to left-multiplying the identity by $\tau_0, \tau_1, \ldots$ in sequence, which builds $\tau_{k-1} \cdots \tau_0 \cdot I = P$.
 
-**Sign of the permutation.** The determinant of $P$ is $\pm 1$ and equals $(-1)^s$ where $s$ is the minimum number of transpositions needed to express $P$. Every permutation decomposes uniquely (up to ordering) into disjoint cycles; an $\ell$-cycle requires exactly $\ell - 1$ transpositions, contributing $(-1)^{\ell-1}$ to the sign. Summing over all $c$ cycles:
+**Sign of the permutation.** The determinant of $P$ is $\pm 1$, namely  $(-1)^s$ where $s$ is the minimum number of transpositions needed to express $P$. Every permutation decomposes uniquely (up to ordering) into disjoint cycles; an $\ell$-cycle requires exactly $\ell - 1$ transpositions, contributing $(-1)^{\ell-1}$ to the sign. Summing over all $c$ cycles:
 
 $$\det P = (-1)^{\sum_{\text{cycles}} (\ell_i - 1)} = (-1)^{n - c}$$
 
@@ -121,7 +121,7 @@ $$S = A_{22} - L_{21} U_{12}$$
  
 $S$ is exactly the trailing submatrix that remains after eliminating the first $k_b$ columns. The key point is that $S$ has the same LU factorisation structure as a standalone matrix: factoring $S = \hat{L} \hat{U}$ (with appropriate pivoting applied to the full trailing rows) gives the remaining blocks of $L$ and $U$. Induction over block columns proves that the blocked algorithm computes the same factorisation as the unblocked algorithm, differing only in the order of arithmetic operations.
  
-In the implementation, [Step 3] (Schur complement update) computes exactly $A_{33} \leftarrow A_{33} - L_{31} U_{23}$. The subsequent block iteration then factors this updated $A_{33}$ as if it were an independent matrix, which is precisely the inductive step.
+In the implementation, [Step 3](#31-block-structure) (Schur complement update) computes exactly $A_{33} \leftarrow A_{33} - L_{31} U_{23}$. The subsequent block iteration then factors this updated $A_{33}$ as if it were an independent matrix, which is precisely the inductive step.
 
 ---
 ## 2. Packed storage layout
@@ -228,7 +228,7 @@ if constexpr (L == Layout::RowMajor) {
 
 Columns $[0, k)$ of the working matrix already hold the multipliers from previous block steps. If those multipliers were not swapped, the final packed representation would encode a different permutation for the factored part than for the unfactored part, and $PA = LU$ equality would not hold. Keeping the swap global ensures that at termination `packed` is a valid simultaneous encoding of both factors under a single consistent permutation $P$.
 
-For `RowMajor` storage the swap is a vectorised `parallel_for` over a contiguous row. For ColMajor, the swap accesses elements at stride `lda` (one per column), which prevents auto-vectorisation; the loop is kept scalar.
+For `RowMajor` storage the swap is a vectorised `parallel_for` over a contiguous row. For `ColMajor` mode, the swap accesses elements at stride `lda` (one per column), which prevents auto-vectorisation; the loop is kept scalar.
 
 ### 3.4 Multiplier scaling
 
@@ -390,4 +390,4 @@ lu_solve(res, inv);
 return inv;
 ```
 
-Each column of the identity becomes the corresponding column of $A^{-1}$ after the solve. Because the argument is a `Matrix<T,L>`, the multiple-RHS `trsm` path is activated automatically, achieving Level-3 arithmetic intensity. The function requires the input `res` to have been computed for a square matrix (enforced by a `BOUNDS_CHECK` macro).
+Each column of the identity becomes the corresponding column of $A^{-1}$ after the solve. Because the argument is a `Matrix<T,L>`, the multiple-RHS `trsm` path is activated automatically, achieving [BLAS-3](/reference/BLAS.md#trsm-multiple-rhs-triangular-solve) arithmetic intensity. The function requires the input `res` to have been computed for a square matrix (enforced by a `BOUNDS_CHECK` macro).

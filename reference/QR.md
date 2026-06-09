@@ -158,7 +158,7 @@ for (size_t i = 1; i < n; ++i) sigma += std::norm(x[i]);
 const double xnorm = std::sqrt(std::norm(x[0]) + sigma);
 ```
 
-`std::norm(z)` returns $|z|^2$ for complex $z$ and $z^2$ for real $z$ - it does **not** call `std::abs`. Squaring directly (rather than the two-pass scaled algorithm used in `nrm2`) is acceptable here because the input $x$ is a column of the working matrix $W$, whose entries are bounded in magnitude by the initial matrix norm times the accumulated Householder growth factor, which for well-conditioned inputs does not cause overflow. The scaled algorithm would add an unnecessary full pass over the column inside an already $O(m)$ construction.
+`std::norm(z)` returns $|z|^2$ for complex $z$ and $z^2$ for real $z$ - it does **not** call `std::abs`. Squaring directly (rather than the two-pass scaled algorithm used in [`nrm2`](/reference/BLAS.md#nrm2-euclidean-norm)) is acceptable here because the input $x$ is a column of the working matrix $W$, whose entries are bounded in magnitude by the initial matrix norm times the accumulated Householder growth factor, which for well-conditioned inputs does not cause overflow. The scaled algorithm would add an unnecessary full pass over the column inside an already $O(m)$ construction.
 
 ---
 ## 3. Applying reflectors
@@ -218,7 +218,7 @@ ger(-b, v, w, W_sub);
 
 This calls the unconjugated `ger` (not `gerc`), applying $W_\text{sub} \mathrel{-}= \beta v w^\top$. The conjugation required for the Hermitian update was already absorbed into $w$ via the $\bar{v}$ input to `gemv` [earlier](#31-forming-of).
 
-**Why not `gemm` here?** For a single reflector, the rank-1 `ger` cost is $O(\text{len} \cdot \text{ncols})$ - the same asymptotic cost as GEMM. However, `ger` avoids the temporary allocation required for GEMM and is lower-latency for the narrow panels (small `ncols`, up to `QR_BLOCK = 64`) typical in the unblocked panel factorisation. The blocked WY path promotes to `gemm` exactly when it matters: for the wide trailing update where `ncols = n - k - n_b` is large.
+**Why not `gemm` here?** For a single reflector, the rank-1 `ger` cost is $O(\text{len} \cdot \text{ncols})$ - the same asymptotic cost as GEMM. However, `ger` avoids the temporary allocation required for GEMM and is lower-latency for the narrow panels (small `ncols`, up to `QR_BLOCK = 64`) typical in the unblocked panel factorisation (cf. the related [treatise](/reference/BLAS.md#ger-and-gerc-rank-1-updates)). The blocked WY path promotes to `gemm` exactly when it matters: for the wide trailing update where `ncols = n - k - n_b` is large.
 
 ---
 ## 4. `larft`: compact WY T-matrix construction

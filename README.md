@@ -4,6 +4,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 ## Table of contents
 - [Overview](#overview)
 - [Features](#features)
+- [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Core types](#core-types)
@@ -24,6 +25,18 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - **Aligned storage**: every allocation is 64-byte aligned by means of `AlignedAllocator`, enabling auto-vectorisation.
 - **Copy-free views**: `VectorView` and `MatrixView` provide zero-overhead windows, transpositions and conjugations.
 - **Complex support**: all operations are designed to support `float`, `double`, and their `std::complex` counterparts.
+
+---
+## Documentation
+
+The library features rich documentation: Doxygen-like comment blocks (natively supported by IntelliSense), detailed syntax overview placed in README, and comprehensive reference covering algorithm-heavy aspects. The text documents are available at the dedicated `reference` folder, and are organised as follows:
+- [BLAS](/reference/BLAS.md)
+- [LU decomposition](/reference/LU.md)
+- [QR decomposition](/reference/QR.md)
+
+*Note:* the format chosen is Markdown, supported by GitHub and a number of modern IDEs and editors (including [VS Code](https://code.visualstudio.com/docs/languages/markdown) - the one used in development). For easier understanding of the algorithms, it is recommended not to rely on GitHub website's rendering of formulas (some of which may be parsed incorrectly).
+
+
 ---
 ## Prerequisites
 | Requirement | Minimum |
@@ -148,7 +161,7 @@ Other operations, supported by the expression infrastructure.
 | Upper triangle extraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
 | Lower triangle extraction | `tril(A, k)` | k-offset, default is 0. |
 
-*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised `gemm` BLAS call instead.
+*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised [`gemm` BLAS](/reference/BLAS.md#gemm-general-matrix-matrix-product) call instead.
 ### Wrapping in expressions
 Optionally use `expr()` to wrap a storage object so it participates expression algebra:
 ```cpp

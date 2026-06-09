@@ -74,7 +74,7 @@ The thresholds are shared and used in different contexts across the library. The
 |---|---|---|
 | `PARALLEL_THRESHOLD_SIMPLE` | 65536 | Used in memory-bound operationss. Above this size data exceeds typical L2 cache and multiple threads genuinely improve throughput. |
 | `PARALLEL_THRESHOLD_COMPUTE` | 4096 | Compute-heavy kernels (`gemv` rows, `ger` columns, `trmv` rows, `symv`/`hemv` columns). Arithmetic intensity is high enough that threading pays off at a smaller element count. |
-| `PARALLEL_THRESHOLD_REDUCE` | 16384 | Reduction passes (`dot`, `nrm2`, `asum`). Per-element work is light but the sequential accumulation bottleneck justifies earlier threading. |
+| `PARALLEL_THRESHOLD_REDUCE` | 16384 | Reduction passes (`dot`, `nrm2`, `asum`) of [BLAS-1](#level-1-vector-operations). Per-element work is light but the sequential accumulation bottleneck justifies earlier threading. |
  
 ### Vectorisation annotations
 | Macro | GCC | Clang | MSVC |
