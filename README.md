@@ -12,6 +12,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - [Operations](#operationsutility-functions)
 - [BLAS](#blas)
 - [Matrix decompositions](#decompositions)
+- [Benchmarking](#benchmarking)
 ---
 ## Overview
 `linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
@@ -41,13 +42,13 @@ The library features rich documentation: Doxygen-like comment blocks (natively s
 ## Prerequisites
 | Requirement | Minimum |
 |-------------|---------|
-| C++ standard| C++20|
-| Compiler | GCC 12+, Clang 14+, MSVC 19.30+ |
-| Architecture | x86-64, ARM64, or any scalar target |
+| C++ standard| C++20. |
+| Compiler | GCC 12+, Clang 14+, MSVC 19.30+. |
+| Architecture | x86-64, ARM64, or any scalar target. |
 
 No third-party assets needed, as the standard library is the only dependency. For installation, copy the `linalg/` directory and include the umbrella header:
 ```cpp
-#include <linalg.hpp>
+#include <linalg/linalg.hpp>
 ```
 Compile with C++20 and enable optimisations for best performance. Below are sample `g++` commands:
 
@@ -62,7 +63,7 @@ g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize m
 ---
 ## Quick start
 ```cpp
-#include <linalg.hpp> // Umbrella header.
+#include <linalg/linalg.hpp> // Umbrella header.
 #include <iostream>
 
 using namespace linalg; // All library classes and functions are enclosed in the namespace.
@@ -261,7 +262,6 @@ double d = lu_det(res); // Determinant.
 auto Ainv = lu_inverse(res); // Inverse.
 ```
 
-
 ### QR factorisation
 Householder QR with optional column pivoting. Uses a blocked compact-WY update for large matrices. Finds matrices satisfying: $AP = QR$ (note the column permutation - opposite convention from LU).
 
@@ -290,5 +290,49 @@ res.rank  // Estimated numerical rank (pivoted only; -1 otherwise).
 res.pivoted // true if pivoting was enabled.
 ```
 *Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference](/reference/QR.md).
+
+---
+## Benchmarking
+
+The library was benchmarked using a console-based suite, with results provided in a dedicated [text file](/benchmark/benchmark.txt).
+
+> **Hardware:** 12-thread machine with 64-byte cache line.
+
+> **Build.** Aggressive optimisation, namely:
+ `g++ -std=c++20 -march=native -mtune=native -O3 -ffast-math -funroll-loops -ftree-vectorize -Iinclude benchmark/benchmark.cpp -o main`.
+
+---
+### Global summary
+```
+  Peak memory BW (axpy large N)    :    54.30 GB/s
+  Peak GEMM double (N>=2048)       :    54.07 GFLOP/s
+  Peak GEMM float                  :    69.12 GFLOP/s
+  Ridge point (double)             :    1.00 FLOP/byte
+```
+
+Every operation performed on `double` with arithmetic intensity below 1.0 FLOP/byte turns out to be memory-bandwidth bound. Per-section peak table:
+
+| Section | Peak GFLOP/s | Peak BW, GB/s | Notes |
+| --- | --- | --- | --- |
+| BLAS-1 | 68.84 (`axpy`) | 445.82 (`scal`) | Limited by L1 bandwidth. |
+| BLAS-2 | 30.97 | 126.79 | `gemv` best performance on L2-compatible workloads. |
+| BLAS-3 | 70.81 (square), 81.30 (wide-short) `gemm` | | Wide-short cache hit. |
+| Decompositions | 69.53 (`lu`) | | `gemm`-dominated workflow. |
+| Norms | | 159.70 | L2 streaming for matrix `norm_inf`. |
+
+---
+### Layout comparison
+
+A series of experiments was run to establish layout-unbiasedness of `gemm` kernels:
+
+| Problem size | `RowMajor` (GFLOP/s) | `ColMajor` (GFLOP/s) | Difference |
+| --- | --- | --- | --- |
+| 128 | 28.44 | 25.44 | 3.0 |
+| 256 | 51.99 | 50.90 | 1.09 |
+| 512 | 63.16 | 62.54 | 0.62 | 
+| 1024 | 64.77 | 64.32 | 0.45 |
+| 2048 | 50.00 | 49.57 | 0.43 |
+
+Even though `RowMajor` mode is set as the default storage, it is apparent that the two layouts are statistically indisitinguishable for $N > 256$. The blocked microkernel (`gemm_microkernel_row` / `gemm_microkernel_col`) is explicitly specialised for each layout, and both apply the same 8-wide unrolled inner loop. The layout abstraction layer adds zero measurable overhead.
 
 ---
