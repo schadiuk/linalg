@@ -102,5 +102,68 @@ namespace linalg {
             };
             return true;
         };
+
+        template<typename T, Layout L>
+        void zero_off_triangle(Matrix<T, L>& A, char uplo) {
+            const size_t n = A.rows();
+            const bool lower = (uplo == "L" || uplo == "l");
+            parallel_for(n, std::max(1, PARALLEL_THRESHOLD_SIMPLE / (n + 1)),
+            [&A, n, lower](size_t rs, size_t re) {
+                for (size_t i = rs; i < re; ++i) {
+                    if (lower) for (size_t j = i + 1; j < n; ++j) A(i, j) = T(0);
+                    else for (size_t j = 0; j < i; ++j) A(i, j) = T(0);;
+                };
+            });
+        };
+
+        template<typename T, Layout L>
+        LINALG_INLINE void sub_copy_in(const Matrix<T,L>& A, Matrix<T,L>& dst, size_t r0, size_t c0) {
+            const size_t nr = dst.rows(), nc = dst.cols();
+            const size_t thr = std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (nc + 1));
+            if constexpr (L == Layout::RowMajor) {
+                parallel_for(nr, thr, [&](size_t s, size_t e) {
+                    for (size_t i = s; i < e; ++i) {
+                        T* LINALG_RESTRICT dp = dst.data() + i * dst.stride();
+                        const T* LINALG_RESTRICT sp = A.data() + (r0+i)*A.stride() + c0;
+                        LINALG_VECTORIZE
+                        for (size_t j = 0; j < nc; ++j) dp[j] = sp[j];
+                    };
+                });
+            } else {
+                parallel_for(nc, thr, [&](size_t s, size_t e) {
+                    for (size_t j = s; j < e; ++j) {
+                        T* LINALG_RESTRICT dp = dst.data() + j * dst.stride();
+                        const T* LINALG_RESTRICT sp = A.data() + (c0+j)*A.stride() + r0;
+                        LINALG_VECTORIZE
+                        for (size_t i = 0; i < nr; ++i) dp[i] = sp[i];
+                    };
+                });
+            };
+        };
+        
+        template<typename T, Layout L>
+        LINALG_INLINE void sub_copy_out(Matrix<T,L>& A, const Matrix<T,L>& src, size_t r0, size_t c0) {
+            const size_t nr = src.rows(), nc = src.cols();
+            const size_t thr = std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (nc + 1));
+            if constexpr (L == Layout::RowMajor) {
+                parallel_for(nr, thr, [&](size_t s, size_t e) {
+                    for (size_t i = s; i < e; ++i) {
+                        const T* LINALG_RESTRICT sp = src.data() + i * src.stride();
+                        T* LINALG_RESTRICT dp = A.data() + (r0+i)*A.stride() + c0;
+                        LINALG_VECTORIZE
+                        for (size_t j = 0; j < nc; ++j) dp[j] = sp[j];
+                    };
+                });
+            } else {
+                parallel_for(nc, thr, [&](size_t s, size_t e) {
+                    for (size_t j = s; j < e; ++j) {
+                        const T* LINALG_RESTRICT sp = src.data() + j * src.stride();
+                        T* LINALG_RESTRICT dp = A.data() + (c0+j)*A.stride() + r0;
+                        LINALG_VECTORIZE
+                        for (size_t i = 0; i < nr; ++i) dp[i] = sp[i];
+                    };
+                });
+            };
+        };
     };
 };
