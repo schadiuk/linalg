@@ -96,8 +96,8 @@ namespace linalg {
                         s -= wpi * cvp[p];
                     };
 
-                    if constexpr (L == Layout::RowMajor) wp[i * lda + i] = s * inv_diag;
-                    else wp[gj * lda + gj] = s * inv_diag;
+                    if constexpr (L == Layout::RowMajor) wp[gj * lda + i] = s * inv_diag;
+                    else wp[i * lda + gj] = s * inv_diag;
                 };
             };
             return true;
@@ -106,8 +106,8 @@ namespace linalg {
         template<typename T, Layout L>
         void zero_off_triangle(Matrix<T, L>& A, char uplo) {
             const size_t n = A.rows();
-            const bool lower = (uplo == "L" || uplo == "l");
-            parallel_for(n, std::max(1, PARALLEL_THRESHOLD_SIMPLE / (n + 1)),
+            const bool lower = (uplo == 'L' || uplo == 'l');
+            parallel_for(n, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (n + 1)),
             [&A, n, lower](size_t rs, size_t re) {
                 for (size_t i = rs; i < re; ++i) {
                     if (lower) for (size_t j = i + 1; j < n; ++j) A(i, j) = T(0);
@@ -218,6 +218,109 @@ namespace linalg {
                 sub_copy_out(A, A22, k + kb, k + kb);
             };
             return true;
+        };
+
+        // Triangular inversion.
+        constexpr size_t TRTRI_BLOCK = 64;
+        
+        template<typename T, Layout L>
+        LINALG_INLINE
+        void trtri_unblocked_lower(Matrix<T, L>& F, size_t k0, size_t nb) {
+            for (size_t j = 0; j < nb; ++j) {
+                const size_t gj = k0 + j;
+                F(gj, gj) = T(1) / F(gj, gj);
+                
+                for (size_t i = j + 1; i < nb; ++i) {
+                    const size_t gi = k0 + i;
+                    T s = T(0);
+                    for (size_t p = j; p < i; ++p) s += F(gi, k0 + p) * F(k0 + p, gj);
+                    F(gi, gj) = -s / F(gi, gi);
+                };
+            };
+        };
+
+        template<typename T, Layout L>
+        LINALG_INLINE
+        void trtri_unblocked_upper(Matrix<T, L>& F, size_t k0, size_t nb) {
+            for (size_t jj = 0; jj < nb; ++jj) {
+                const size_t j = nb - 1 - jj;
+                const size_t gj = k0 + j;
+                F(gj, gj) = T(1) / F(gj, gj);
+                
+                for (size_t ii = 0; ii < j; ++ii) {
+                    const size_t i = j - 1 - ii;
+                    const size_t gi = k0 + i;
+                    T s = T(0);
+                    for (size_t p = i + 1; p <= j; ++p) s += F(gi, k0 + p) * F(k0 + p, gj);
+                    F(gi, gj) = -s / F(gi, gi);
+                };
+            };
+        };
+
+        template<typename T, Layout L>
+        void trtri_lower(Matrix<T, L>& F) {
+            const size_t n = F.rows();
+            for (size_t k = 0; k < n; k += TRTRI_BLOCK) {
+                const size_t kb = std::min(TRTRI_BLOCK, n - k);
+                // Invert the diagonal block F[k:k+kb, k:k+kb] in place (unblocked).
+                trtri_unblocked_lower(F, k, kb);
+                if (k + kb >= n) break;
+                const size_t trail = n - (k + kb);
+                // F21_new = -F22^{-1} * F21 * F11^{-1}.
+                // Step A: tmp = F21 * F11^{-1}.
+                // Solved as a right-side lower trsm: X * F11 = F21, i.e. trsm('R','L','N','N', 1, F11, F21).
+                Matrix<T, L> F21(trail, kb);
+                sub_copy_in(F, F21, k + kb, k);
+
+                T* const fp = F.data();
+                const size_t lda = F.stride();
+                const T* f11_ptr = fp + k * lda + k;
+                MatrixView<T, L, false, false, false> F11_view(f11_ptr, kb, kb, lda);
+        
+                trsm('R', 'L', 'N', 'N', T(1), expr(F11_view), F21);
+                // F21 now holds F21_orig * F11^{-1}
+                // Step B: F21_new = -F22^{-1} * (F21_orig * F11^{-1})
+                // This is a left-side lower trsm against F22 (which has not yet been inverted: it holds the original lower factor of F).
+                const T* f22_ptr = fp + (k + kb) * lda + ( k + kb);
+                MatrixView<T, L, false, false, false> F22_view(f22_ptr, trail, trail, lda);
+        
+                trsm('L', 'L', 'N', 'N', T(-1), expr(F22_view), F21);
+                sub_copy_out(F, F21, k + kb, k);
+            };
+        };
+        
+        template<typename T, Layout L>
+        void trtri_upper(Matrix<T, L>& F) {
+            const size_t n = F.rows();
+            // Process right-to-left: invert the last diagonal block, then propagate left.
+            const size_t nblocks = (n + TRTRI_BLOCK - 1) / TRTRI_BLOCK;
+            for (size_t bb = 0; bb < nblocks; ++bb) {
+                const size_t b = nblocks - 1 - bb;
+                const size_t k = b * TRTRI_BLOCK;
+                const size_t kb = std::min(TRTRI_BLOCK, n - k);
+
+                trtri_unblocked_upper(F, k, kb);
+                if (k == 0) break;
+        
+                // U12_new = -U11^{-1} * U12 * U22^{-1}.
+                // Step A: tmp = U12 * U22^{-1}  (right-side upper trsm).
+                Matrix<T, L> U12(k, kb);
+                sub_copy_in(F, U12, 0, k);
+        
+                T* const fp = F.data();
+                const size_t lda = F.stride();
+                const T* u22_ptr = fp +  k * lda + k;
+                MatrixView<T, L, false, false, false> U22_view(u22_ptr, kb, kb, lda);
+        
+                trsm('R', 'U', 'N', 'N', T(1), expr(U22_view), U12);
+        
+                // Step B: U12_new = -U11^{-1} * tmp.
+                const T* u11_ptr = fp;
+                MatrixView<T, L, false, false, false> U11_view(u11_ptr, k, k, lda);
+        
+                trsm('L', 'U', 'N', 'N', T(-1), expr(U11_view), U12);
+                sub_copy_out(F, U12, 0, k);
+            };
         };
     };
 };
