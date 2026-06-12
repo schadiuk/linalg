@@ -30,7 +30,7 @@ namespace linalg {
                 real_type_t<T> d = static_cast<real_type_t<T>>(std::real(static_cast<T>(wp[gj * lda + gj])));
 
                 for (size_t p = 0; p < j; ++p)
-                    d -= static_cast<chol_real_t<T>>(std::norm(L == Layout::RowMajor ? 
+                    d -= static_cast<real_type_t<T>>(std::norm(L == Layout::RowMajor ? 
                     wp[gj * lda + (k+p)] : wp[(k+p) * lda + gj]));
                 if (d <= real_type_t<T>(0)) return false;
 
@@ -75,7 +75,7 @@ namespace linalg {
                 real_type_t<T> d = static_cast<real_type_t<T>>(std::real(static_cast<T>(wp[gj * lda + gj])));
 
                 for (size_t p = 0; p < j; ++p)
-                    d -= static_cast<chol_real_t<T>>(std::norm(L == Layout::RowMajor ? 
+                    d -= static_cast<real_type_t<T>>(std::norm(L == Layout::RowMajor ? 
                     wp[(k+p) * lda + gj] : wp[gj * lda + (k+p)]));
                 if (d <= real_type_t<T>(0)) return false;
 
@@ -164,6 +164,60 @@ namespace linalg {
                     };
                 });
             };
+        };
+
+        template<typename T, Layout L>
+        bool chol_factor_lower(Matrix<T, L>& A) {
+            const size_t n = A.rows();
+            for (size_t k = 0; k < n; k += L2_BLOCK) {
+                const size_t kb = std::min(L2_BLOCK, n - k);
+                // Step 1: unblocked panel
+                if (!chol_unblocked_lower(A, k, kb)) return false;
+                if (k + kb >= n) break;
+                const size_t trail = n - (k + kb);
+                // Step 2: trsm  L21 = A21 * L11^{-H}
+                // L11 is at A[k:k+kb, k:k+kb] - wrap as a non-owning view - trsm's MatExpr overload accepts this directly.
+                T* const ap = A.data();
+                const size_t lda = A.stride();
+                const T* l11_ptr = ap + k*lda+k;
+                MatrixView<T, L, false, false, false> L11_view(l11_ptr, kb, kb, lda);
+                Matrix<T, L> A21(trail, kb);
+                sub_copy_in(A, A21, k + kb, k);
+                trsm('R', 'L', 'C', 'N', T(1), expr(L11_view), A21);
+                sub_copy_out(A, A21, k + kb, k);
+                // Step 3: herk  A22 -= L21 * L21^H.
+                Matrix<T, L> A22(trail, trail);
+                sub_copy_in(A, A22, k + kb, k + kb);
+                herk('L', 'N', real_type_t<T>(-1), expr(A21), real_type_t<T>(1), A22);
+                sub_copy_out(A, A22, k + kb, k + kb);
+            };
+            return true;
+        };
+
+        template<typename T, Layout L>
+        bool chol_factor_upper(Matrix<T, L>& A) {
+            const size_t n = A.rows();
+            for (size_t k = 0; k < n; k += L2_BLOCK) {
+                const size_t kb = std::min(L2_BLOCK, n - k);
+                if (!chol_unblocked_upper(A, k, kb)) return false;
+                if (k + kb >= n) break;
+                const size_t trail = n - (k + kb);
+
+                T* const ap = A.data();
+                const size_t lda = A.stride();
+                const T* u11_ptr = ap + k * lda + k;
+                MatrixView<T, L, false, false, false> U11_view(u11_ptr, kb, kb, lda);
+                Matrix<T, L> A12(kb, trail);
+                sub_copy_in(A, A12, k, k + kb);
+                trsm('L', 'U', 'C', 'N', T(1), expr(U11_view), A12);
+                sub_copy_out(A, A12, k, k + kb);
+        
+                Matrix<T, L> A22(trail, trail);
+                sub_copy_in(A, A22, k + kb, k + kb);
+                herk('U', 'C', real_type_t<T>(-1), expr(A12), real_type_t<T>(1), A22);
+                sub_copy_out(A, A22, k + kb, k + kb);
+            };
+            return true;
         };
     };
 };
