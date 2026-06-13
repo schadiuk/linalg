@@ -524,6 +524,9 @@ namespace linalg {
                 // Element of A at logical outer-product index (vec, k).
                 // notrans -> row  vec of A: A(vec, k)
                 // trans -> col  vec of A: A(k, vec)
+                // ColMajor + trans: physical A[k,i] = ap[i*lda + k]
+
+                const bool conj_fill = conjugate && !notrans; // For syrk (conjugate=false), trans means A^T not A^H, so no conjugation.
                 using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
                 AlignedBuf A_buf(N * K);
                 T* LINALG_RESTRICT Ab = detail::assume_aligned<64>(A_buf.data());
@@ -541,14 +544,20 @@ namespace linalg {
                                     const T* src = ap + i * lda;
                                     LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
                                 } else {
-                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+                                    if (conj_fill) {
+                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[k * lda + i]);
+                                    } else LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
                                 };
                             } else {
                                 if (notrans) {
                                     LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
                                 } else {
-                                    const T* src = ap + i * lda;
-                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                    if (conj_fill) {
+                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[i * lda + k]);
+                                    } else {
+                                        const T* src = ap + i * lda;
+                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                    };
                                 };
                             };
                         };
