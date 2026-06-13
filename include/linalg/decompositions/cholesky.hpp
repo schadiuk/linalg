@@ -323,4 +323,34 @@ namespace linalg {
             };
         };
     };
+
+    /// @brief Positive-definite triangular factor: Cholesky factorisation.
+    /// @param A Matrix to be decomposed.
+    /// @param uplo Upper/lower triangular form.
+    /// @return `CholeskyResult` structure.
+    template<typename T, Layout L>
+    CholeskyResult<T, L> potrf(const Matrix<T, L>& A, char uplo = 'L') {
+        BOUNDS_CHECK(A.rows() == A.cols());
+        const size_t n = A.rows();
+        const bool lower = (uplo == 'L' || uplo == 'l');
+        // Copy the relevant triangle into work matrix:
+        Matrix<T, L> W(n, n, T(0));
+        parallel_for(n, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (n + 1)),
+            [&](size_t rs, size_t re) {
+                for (size_t i = rs; i < re; ++i) {
+                    if (lower) for (size_t j = 0; j <= i; ++j) W(i, j) = A(i, j);
+                    else for (size_t j = i; j < n; ++j) W(i, j) = A(i, j);
+                };
+            });
+    
+        const bool ok = lower ? detail::chol_factor_lower(W) : detail::chol_factor_upper(W);
+
+        if (!ok) throw std::runtime_error("potrf: matrix is not positive-definite");
+    
+        detail::zero_off_triangle(W, uplo);
+        return CholeskyResult<T, L>{ std::move(W), lower ? 'L' : 'U' };
+    };
+
+    template<typename T, Layout L, typename E>
+    CholeskyResult<T, L> potrf(const MatExpr<E>& e, char uplo = 'L') { return potrf(Matrix<T, L>(e), uplo); };
 };
