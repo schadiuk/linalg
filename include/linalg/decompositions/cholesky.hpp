@@ -263,29 +263,25 @@ namespace linalg {
             for (size_t k = 0; k < n; k += TRTRI_BLOCK) {
                 const size_t kb = std::min(TRTRI_BLOCK, n - k);
                 // Invert the diagonal block F[k:k+kb, k:k+kb] in place (unblocked).
-                trtri_unblocked_lower(F, k, kb);
-                if (k + kb >= n) break;
-                const size_t trail = n - (k + kb);
-                // F21_new = -F22^{-1} * F21 * F11^{-1}.
-                // Step A: tmp = F21 * F11^{-1}.
-                // Solved as a right-side lower trsm: X * F11 = F21, i.e. trsm('R','L','N','N', 1, F11, F21).
-                Matrix<T, L> F21(trail, kb);
-                sub_copy_in(F, F21, k + kb, k);
+                if (k + kb < n) {
+                    const size_t trail = n - (k + kb);
+                    T* const fp = F.data();
+                    const size_t lda = F.stride();
 
-                T* const fp = F.data();
-                const size_t lda = F.stride();
-                const T* f11_ptr = fp + k * lda + k;
-                MatrixView<T, L, false, false, false> F11_view(f11_ptr, kb, kb, lda);
-        
-                trsm('R', 'L', 'N', 'N', T(1), expr(F11_view), F21);
-                // F21 now holds F21_orig * F11^{-1}
-                // Step B: F21_new = -F22^{-1} * (F21_orig * F11^{-1})
-                // This is a left-side lower trsm against F22 (which has not yet been inverted: it holds the original lower factor of F).
-                const T* f22_ptr = fp + (k + kb) * lda + ( k + kb);
-                MatrixView<T, L, false, false, false> F22_view(f22_ptr, trail, trail, lda);
-        
-                trsm('L', 'L', 'N', 'N', T(-1), expr(F22_view), F21);
-                sub_copy_out(F, F21, k + kb, k);
+                    const T* f11_ptr = fp + k*lda + k;
+                    MatrixView<T, L, false, false, false> F11_view(f11_ptr, kb, kb, lda);
+                    Matrix<T, L> F21(trail, kb);
+                    sub_copy_in(F, F21, k + kb, k);
+                    trsm('R', 'L', 'N', 'N', T(1), expr(F11_view), F21);
+                    trtri_unblocked_lower(F, k, kb);
+
+                    const T* f22_ptr = fp + (k + kb) * lda + ( k + kb);
+                    MatrixView<T, L, false, false, false> F22_view(f22_ptr, trail, trail, lda);
+                    trsm('L', 'L', 'N', 'N', T(-1), expr(F22_view), F21);
+                    sub_copy_out(F, F21, k + kb, k);
+                } else {
+                    trtri_unblocked_lower(F, k, kb);
+                };                
             };
         };
         
@@ -298,28 +294,21 @@ namespace linalg {
                 const size_t b = nblocks - 1 - bb;
                 const size_t k = b * TRTRI_BLOCK;
                 const size_t kb = std::min(TRTRI_BLOCK, n - k);
+                if (k > 0) {
+                    T* const fp = F.data();
+                    const size_t lda = F.stride();
+                    MatrixView<T,L,false,false,false> U22_view(fp + k * lda + k, kb, kb, lda);
+                    Matrix<T, L> U12(k, kb);
+                    sub_copy_in(F, U12, 0, k);
+                    trsm('R', 'U', 'N', 'N', T(1), expr(U22_view), U12);
 
-                trtri_unblocked_upper(F, k, kb);
-                if (k == 0) break;
-        
-                // U12_new = -U11^{-1} * U12 * U22^{-1}.
-                // Step A: tmp = U12 * U22^{-1}  (right-side upper trsm).
-                Matrix<T, L> U12(k, kb);
-                sub_copy_in(F, U12, 0, k);
-        
-                T* const fp = F.data();
-                const size_t lda = F.stride();
-                const T* u22_ptr = fp +  k * lda + k;
-                MatrixView<T, L, false, false, false> U22_view(u22_ptr, kb, kb, lda);
-        
-                trsm('R', 'U', 'N', 'N', T(1), expr(U22_view), U12);
-        
-                // Step B: U12_new = -U11^{-1} * tmp.
-                const T* u11_ptr = fp;
-                MatrixView<T, L, false, false, false> U11_view(u11_ptr, k, k, lda);
-        
-                trsm('L', 'U', 'N', 'N', T(-1), expr(U11_view), U12);
-                sub_copy_out(F, U12, 0, k);
+                    trtri_unblocked_upper(F, k, kb);
+                    MatrixView<T,L,false,false,false> U11_view(fp, k, k, lda);
+                    trsm('L', 'U', 'N', 'N', T(-1), expr(U11_view), U12);
+                    sub_copy_out(F, U12, 0, k);
+                } else {
+                    trtri_unblocked_upper(F, k, kb);
+                };
             };
         };
     };
@@ -345,7 +334,7 @@ namespace linalg {
     
         const bool ok = lower ? detail::chol_factor_lower(W) : detail::chol_factor_upper(W);
 
-        if (!ok) throw std::runtime_error("potrf: matrix is not positive-definite");
+        if (!ok) throw std::runtime_error("potrf: matrix is not positive-definite.");
     
         detail::zero_off_triangle(W, uplo);
         return CholeskyResult<T, L>{ std::move(W), lower ? 'L' : 'U' };
@@ -370,6 +359,9 @@ namespace linalg {
         };
     };
 
+    /// @brief In-place solution of `A * x = b`.
+    /// @param res `CholeskyResult` instance.
+    /// @param b RHS vector (overwritten by the solution).
     template<typename T, Layout L>
     void potrs(const CholeskyResult<T, L>& res, Vector<T>& b) {
         const size_t n = res.factor.rows();
@@ -382,4 +374,51 @@ namespace linalg {
             trsv('U', 'N', 'N', expr(res.factor), b); // U * x = y
         };
     };
-};
+
+    /// @brief Matrix inverse computation.
+    /// @param res `CholeskyResult` instance.
+    /// @return Corresponding inverse.
+    template<typename T, Layout L>
+    Matrix<T, L> potri(const CholeskyResult<T, L>& res) {
+        const size_t n = res.factor.rows();
+        Matrix<T, L> f = res.factor;
+        const bool lower = (res.uplo == 'L' || res.uplo == 'l');
+        if (lower) detail::trtri_lower(f);
+        else detail::trtri_upper(f);
+
+        Matrix<T, L> inv(n, n);
+        if (lower) {
+            herk('L', 'C', detail::real_type_t<T>(1), expr(f), detail::real_type_t<T>(0), inv);
+        } else {
+            herk('U', 'N', detail::real_type_t<T>(1), expr(f), detail::real_type_t<T>(0), inv);
+        };
+
+        parallel_for(n, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (n + 1)),
+            [&inv, n, lower](size_t rs, size_t re) {
+                for (size_t i = rs; i < re; ++i) {
+                    if (lower) for (size_t j = i + 1; j < n; ++j) inv(i, j) = conj(inv(j, i));
+                    else for (size_t j = 0; j < i; ++j) inv(i, j) = conj(inv(j, i));
+                };
+        });
+        return inv;
+    };
+
+    /// @brief Logarithm of determinant computation.
+    /// @param res `CholeskyResult` instance.
+    /// @return The log-det quantity.
+    template<typename T, Layout L>
+    double chol_logdet(const CholeskyResult<T, L>& res) {
+        const size_t n = res.factor.rows();
+        double s = 0.0;
+        for (size_t i = 0; i < n; ++i) s += std::log(static_cast<double>(std::real(static_cast<T>(res.factor(i,i)))));
+        return 2.0 * s;
+    };
+    
+    /// @brief Determinant of an HPD matrix.
+    /// @param res `CholeskyResult` instance. 
+    /// @return The determinant.
+    template<typename T, Layout L>
+    double chol_det(const CholeskyResult<T, L>& res) {
+        return std::exp(chol_logdet(res));
+    };
+};;
