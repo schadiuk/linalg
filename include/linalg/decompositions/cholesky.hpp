@@ -353,4 +353,33 @@ namespace linalg {
 
     template<typename T, Layout L, typename E>
     CholeskyResult<T, L> potrf(const MatExpr<E>& e, char uplo = 'L') { return potrf(Matrix<T, L>(e), uplo); };
+
+    /// @brief In-place solution of `A * x = B`.
+    /// @param res `CholeskyResult` instance.
+    /// @param B RHS matrix (overwritten by the solution).
+    template<typename T, Layout L>
+    void potrs(const CholeskyResult<T, L>& res, Matrix<T, L>& B) {
+        const size_t n = res.factor.rows();
+        BOUNDS_CHECK(res.factor.cols() == n && B.rows() == n);
+        if (res.uplo == 'L' || res.uplo == 'l') {
+            trsm('L', 'L', 'N', 'N', T(1), expr(res.factor), B); // L * Y = B
+            trsm('L', 'L', 'C', 'N', T(1), expr(res.factor), B); // L^H * X = Y
+        } else {
+            trsm('L', 'U', 'C', 'N', T(1), expr(res.factor), B); // U^H * Y = B
+            trsm('L', 'U', 'N', 'N', T(1), expr(res.factor), B); // U * X = Y
+        };
+    };
+
+    template<typename T, Layout L>
+    void potrs(const CholeskyResult<T, L>& res, Vector<T>& b) {
+        const size_t n = res.factor.rows();
+        BOUNDS_CHECK(res.factor.cols() == n && b.size() == n);
+        if (res.uplo == 'L' || res.uplo == 'l') {
+            trsv('L', 'N', 'N', expr(res.factor), b); // L * y = b
+            trsv('L', 'C', 'N', expr(res.factor), b); // L^H * x = y
+        } else {
+            trsv('U', 'C', 'N', expr(res.factor), b); // U^H * y = b
+            trsv('U', 'N', 'N', expr(res.factor), b); // U * x = y
+        };
+    };
 };
