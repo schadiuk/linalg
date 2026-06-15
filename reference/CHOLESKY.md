@@ -8,6 +8,7 @@ This document covers the implementation of Cholesky decomposition algorithm.
 ## Table of contents:
 - [Preamble](#0-preamble-and-notation)
 - [Mathematical foundations](#1-mathematical-foundations)
+- [Storage layout](#2-storage-layout)
 ---
 ## 0. Preamble and notation
 
@@ -67,3 +68,67 @@ LU with partial pivoting requires $\tfrac{2}{3}n^3$ arithmetic operations. Chole
 $$\max_{ij} |L_{ij}| \leq \max_{ij} |A_{ij}|$$
 
 This is a stronger guarantee than LU with partial pivoting, whose growth factor is bounded by $2^{n-1}$ in the worst case. In practice, Cholesky applied to HPD matrices produces residuals at the level of $\varepsilon \cdot \kappa(A)$, proportional to the condition number and not amplified by the factorisation itself.
+
+---
+## 2. Storage layout
+After `potrf` returns, the `factor` field of `CholeskyResult` holds:
+$$\text{factor}[i,j] = \begin{cases} L_{ij} & i \geq j \\ 0 & i < j \end{cases}$$
+
+for `uplo == 'L'`, and correspondingly:
+$$\text{factor}[i,j] = \begin{cases} U_{ij} & i \leq j \\ 0 & i > j \end{cases}$$
+
+for `uplo == 'U'`.
+
+### Input handling
+`potrf` copies only the relevant triangle of the input $A$ into a working matrix $W$ before factorisation. The copy is parallelised over rows via `parallel_for`. The opposite triangle of $W$ is explicitly set to to zero in the `Matrix<T,L>(n, n, T(0))` constructor, so it is never read from $A$. After the kernel returns, `zero_off_triangle` makes a further explicit zeroing pass (also parallelised) to overwrite any incidental writes from the blocked steps, guaranteeing the invariant above in the returned `factor`.
+
+---
+## 3. `potrf`: the blocked algorithm
+
+### 3.1 Block structure
+
+An unblocked column-by-column Cholesky performs $O(n^3/3)$ arithmetic operations, but each rank-1 trailing update at step $j$ reads and writes the full trailing submatrix - a bandwidth-bound operation. Blocking reorganises the work into three phases per block column. The block width is set by `L2_BLOCK = 128`. At outer step $k$, let $k_b = \min(\text{L2\_BLOCK},\, n - k)$ and partition the working matrix as:
+$$A^{(k)} = \begin{bmatrix} A_{11} & \cdots \\ A_{21} & A_{22} \end{bmatrix}$$
+
+where the relevant blocks have the dimensions summarised below:
+
+| Block | Rows | Columns | Description |
+|---|---|---|---|
+| $A_{11}$ | $k$ | $k$ | Already factored; holds $L_{11}$ (lower) and zeros (upper). |
+| $A_{21}$ | $k_b$ | $k_b$ | Current panel diagonal block. |
+| $A_{31}$ | $n - k - k_b$ | $k_b$ | Panel below diagonal. |
+| $A_{33}$ | $n - k - k_b$ | $n - k - k_b$ | Trailing submatrix. |
+
+The algorithm per block column is as follows:
+
+**Step 1: unblocked panel factorisation.** `chol_unblocked_lower(A, k, kb)` function factors the $k_b \times k_b$ diagonal block in-place, producing $L_{11}$. After this step, $A_{21}$ holds $L_{11}$ and $A_{31}$ holds the raw entries $A_{31}$.
+
+**Step 2: panel triangular solve.** The off-diagonal block satisfies $A_{31} = L_{31} L_{11}^H$, so:
+$$L_{31} = A_{31} L_{11}^{-H}$$
+
+solved via `trsm` call. The notation `L11_view` is a `MatrixView` pointing directly into $A$ at offset $(k, k)$ with stride `lda = n` - no copy of the $k_b \times k_b$ panel is made (cf. the related [discussion](#33-submatrix-copying)).
+
+**Step 3: Schur complement update.** Update the trailing submatrix:
+$$A_{33} \leftarrow A_{33} - L_{31} L_{31}^H$$
+
+via `herk` routine. This is the critical [Level-3 operation](/reference/BLAS.md#syrk-and-herk-rank-k-updates); for large $n$, essentially all $\tfrac{1}{3} n^3$ arithmetic is performed here across all block iterations.
+
+### 3.2 Unblocked panel kernel
+
+The kernel `chol_unblocked_lower` operates in-place on the $k_b \times k_b$ submatrix of $A$ at global offset $(k, k)$. For each column $j = 0, \ldots, k_b - 1$ (global index $g_j = k + j$):
+
+**Diagonal.** Compute the Schur complement residual and take its square root:
+$$d = Re(A_{g_j,\, g_j}) - \sum_{p=0}^{j-1} |A_{g_j,\, k+p}|^2$$
+
+If $d \leq 0$, the matrix is not positive-definite: the kernel returns `false` and `potrf` throws `std::runtime_error`. Otherwise $L_{g_j,\, g_j} = \sqrt{d}$.
+
+**Sub-diagonal column.** For each row $i = g_j + 1, \ldots, k + k_b - 1$:
+$$L_{i,\, g_j} = \frac{A_{i,\, g_j} - \displaystyle\sum_{p=0}^{j-1} A_{i,\, k+p}\, \overline{A_{g_j,\, k+p}}}{L_{g_j,\, g_j}}$$
+
+### 3.3 Submatrix copying
+
+`sub_copy_in` and `sub_copy_out` copy rectangular blocks between the working matrix $A$ and contiguous temporary matrices. They exist for the same reason as their specialised counterparts in `lu.hpp`: `trsm` and `herk` require operands whose leading dimension equals the block width to hit the optimised path; a subview of $A$ has `lda = n` rather than $k_b$. The copy normalises the stride.
+ 
+The exception is $L_{11}$ (and $U_{11}$ in the upper variant), which is passed to `trsm` as a `MatrixView` directly into $A$ - no copy. The view carries `lda = n` but `trsm`'s triangular solve reads only the active $k_b \times k_b$ triangle, so the large stride imposes no correctness issue and avoids an $O(k_b^2)$ allocation and copy.
+ 
+The parallelisation threshold for copy operations is `PARALLEL_THRESHOLD_SIMPLE / nc` for `RowMajor` mode of storage (each thread handles at least one complete row) and `PARALLEL_THRESHOLD_SIMPLE / nr` for `ColMajor`, ensuring task granularity remains coarse enough to amortise spawn overhead.
