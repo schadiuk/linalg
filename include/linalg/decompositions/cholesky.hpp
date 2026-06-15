@@ -317,6 +317,7 @@ namespace linalg {
     /// @param A Matrix to be decomposed.
     /// @param uplo Upper/lower triangular form.
     /// @return `CholeskyResult` structure.
+    /// @throw `std::runtime_error` whenever non-HPD matrix `A` is encountered.
     template<typename T, Layout L>
     CholeskyResult<T, L> potrf(const Matrix<T, L>& A, char uplo = 'L') {
         BOUNDS_CHECK(A.rows() == A.cols());
@@ -421,4 +422,4 @@ namespace linalg {
     double chol_det(const CholeskyResult<T, L>& res) {
         return std::exp(chol_logdet(res));
     };
-};;
+};
