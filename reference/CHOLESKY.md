@@ -9,6 +9,8 @@ This document covers the implementation of Cholesky decomposition algorithm.
 - [Preamble](#0-preamble-and-notation)
 - [Mathematical foundations](#1-mathematical-foundations)
 - [Storage layout](#2-storage-layout)
+- [Algorithm](#3-potrf-the-blocked-algorithm)
+- [Public API](#4-public-api)
 ---
 ## 0. Preamble and notation
 
@@ -24,7 +26,7 @@ The following quantities appear in the analysis below.
 
 **Result type.** After factorisation, `potrf` returns a `CholeskyResult<T,L>` structure containing the triangular factor and a `char` tag indicating which triangle was used. [Unlike `LUResult`](/reference/LU.md#2-packed-storage-layout), the factor matrix has the same dimensions as the input and the opposite triangle is exactly zero.
 
-**Naming.** Rather than using the *(somewhat lengthy)* surname-based naming, the public API (`potrf`, `potrs`, `potri`) is adherent to the [LAPACK convention](https://www.netlib.org/lapack/explore-html/d2/d09/group__potrf.html) for positive-definite triangular routines.
+**Naming.** Rather than using the *(somewhat lengthy)* surname-based naming, the public API (`potrf`, `potrs`, `potri`) occasionally uses the [LAPACK convention](https://www.netlib.org/lapack/explore-html/d2/d09/group__potrf.html) for positive-definite triangular routines.
 
 ---
 ## 1. Mathematical foundations
@@ -132,3 +134,72 @@ $$L_{i,\, g_j} = \frac{A_{i,\, g_j} - \displaystyle\sum_{p=0}^{j-1} A_{i,\, k+p}
 The exception is $L_{11}$ (and $U_{11}$ in the upper variant), which is passed to `trsm` as a `MatrixView` directly into $A$ - no copy. The view carries `lda = n` but `trsm`'s triangular solve reads only the active $k_b \times k_b$ triangle, so the large stride imposes no correctness issue and avoids an $O(k_b^2)$ allocation and copy.
  
 The parallelisation threshold for copy operations is `PARALLEL_THRESHOLD_SIMPLE / nc` for `RowMajor` mode of storage (each thread handles at least one complete row) and `PARALLEL_THRESHOLD_SIMPLE / nr` for `ColMajor`, ensuring task granularity remains coarse enough to amortise spawn overhead.
+
+---
+## 4. Public API
+
+### 4.1 `potrf()`: master function
+```cpp
+template<typename T, Layout L>
+CholeskyResult<T, L> potrf(const Matrix<T, L>& A, char uplo = 'L');
+
+// Expression overload.
+template<typename T, Layout L, typename E>
+CholeskyResult<T, L> potrf(const MatExpr<E>& e, char uplo = 'u');
+```
+
+The functions performs **PO**sitive definite **TR**iangular **F**actorisation of the given matrix $A$ by copying the relevant triangle into a working matrix and then calling specialised kernel in-place. The copy is limited to the relevant triangle to avoid reading uninitialised or garbage values from the opposite triangle of the caller's matrix. The `MatExpr` overload materialises the expression into a `Matrix<T,L>` object first; it accepts expression-template inputs such as `hermitian(B)` without additional allocation beyond the internal working copy.
+
+**Throws** `std::runtime_error` if a non-positive diagonal pivot is encountered. The `uplo` argument is case-insensitive (`'l'` and `'u'` are accepted alongside `'L'` and `'U'`).
+
+### 4.2 `potrs()`: single and multiple RHS
+```cpp
+template<typename T, Layout L>
+void potrs(const CholeskyResult<T, L>& res, Matrix<T, L>& B);
+
+template<typename T, Layout L>
+void potrs(const CholeskyResult<T, L>& res, Vector<T>& b);
+```
+
+The matrix overload uses `trsm` (parallelised over RHS columns). The vector overload uses `trsv` (sequential, no allocation, no copy) - perhaps, the most reasonable choice for single-vector solves where `trsm` thread-spawn overhead would dominate.
+
+### 4.3 Determinant computation
+```cpp
+template<typename T, Layout L>
+double cholesky_logdet(const CholeskyResult<T, L>& res);
+
+template<typename T, Layout L>
+double cholesky_det(const CholeskyResult<T, L>& res);
+```
+
+The choice of log-det strategy is motivated by overflow safety concerns (cf. the relevant discussion [here](/reference/LU.md#43-determinant-computation)). The computation is done as follows:
+$$\log|\det A| = 2\sum_{i=0}^{n-1} \log L_{ii}$$
+ 
+All $L_{ii}$ are strictly positive real by construction, so the logarithm is always defined. `cholesky_det` returns $\exp(\texttt{logdet}(\texttt{res}))$; for large $n$ this may itself overflow, and `cholesky_logdet` is preferred when only the log-scale quantity is needed (e.g. for log-likelihood evaluation in Gaussian process models).
+
+### 4.4 Marix inverse
+```cpp
+template<typename T, Layout L>
+Matrix<T, L> potri(const CholeskyResult<T, L>& res);
+```
+
+Computes $A^{-1}$ from a previously computed Cholesky factor without modifying `res`. Returns the full Hermitian inverse. The computation proceeds in three steps:
+ 
+**Step 1: triangular inversion (`trtri`).** The factor is copied to a working matrix `Finv` and inverted in-place using a blocked algorithm with block size `TRTRI_BLOCK = 64`. For the lower case, the block-column identity:
+ 
+$$F^{-1} = \begin{bmatrix} F_{11}^{-1} & 0 \\ -F_{22}^{-1} F_{21} F_{11}^{-1} & F_{22}^{-1} \end{bmatrix}$$
+ 
+is applied block-column by block-column. `trtri_unblocked_lower` inverts the diagonal block sequentially ($O(k_b^3)$, cache-resident for `TRTRI_BLOCK = 64`); then two `trsm` calls form the off-diagonal:
+```cpp
+// tmp = F21 * F11^{-1}  (F11 accessed as MatrixView into Finv).
+trsm('R', 'L', 'N', 'N', T(1), F11_view, F21);
+// F21_new = -F22^{-1} * tmp  (F22 not yet inverted; also MatrixView).
+trsm('L', 'L', 'N', 'N', T(-1), F22_view, F21);
+```
+
+**Step 2: Hermitian product via `herk`.** Given $F^{-1} = L^{-1}$ (or $U^{-1}$):
+$$A^{-1} = (L^{-1})^H L^{-1}$$
+
+`herk` fills only the requested triangle of `C`, achieving [BLAS-3](/reference/BLAS.md#syrk-and-herk-rank-k-updates) arithmetic intensity for the dominant $O(n^3/3)$ work.
+
+**Step 3: reflection.** The computed triangle is reflected to the opposite triangle via conjugation, parallelised with `parallel_for`, producing the full $n \times n$ Hermitian result matrix.

@@ -408,7 +408,7 @@ namespace linalg {
     /// @param res `CholeskyResult` instance.
     /// @return The log-det quantity.
     template<typename T, Layout L>
-    double chol_logdet(const CholeskyResult<T, L>& res) {
+    double cholesky_logdet(const CholeskyResult<T, L>& res) {
         const size_t n = res.factor.rows();
         double s = 0.0;
         for (size_t i = 0; i < n; ++i) s += std::log(static_cast<double>(std::real(static_cast<T>(res.factor(i,i)))));
@@ -419,7 +419,7 @@ namespace linalg {
     /// @param res `CholeskyResult` instance. 
     /// @return The determinant.
     template<typename T, Layout L>
-    double chol_det(const CholeskyResult<T, L>& res) {
-        return std::exp(chol_logdet(res));
+    double cholesky_det(const CholeskyResult<T, L>& res) {
+        return std::exp(cholesky_logdet(res));
     };
 };
