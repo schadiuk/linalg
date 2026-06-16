@@ -32,6 +32,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 
 The library features rich documentation: Doxygen-like comment blocks (natively supported by IntelliSense), detailed syntax overview placed in README, and comprehensive reference covering algorithm-heavy aspects. The text documents are available at the dedicated `reference` folder, and are organised as follows:
 - [BLAS](/reference/BLAS.md)
+- [Cholesky factorisation](/reference/CHOLESKY.md)
 - [LU decomposition](/reference/LU.md)
 - [QR decomposition](/reference/QR.md)
 
@@ -237,6 +238,28 @@ The existing routines follow standard 3-level convention:
 ## Decompositions
 The library provides common matrix factorisations, naturally integrated with the expression template and BLAS machinery.
 
+---
+### Cholesky factorisation
+
+Blocked **PO**sitive definite **TR**iangular **F**actorisation of an HPD (Hermitian Positive Definite) matrix. For the given matrix $A$ finds lower triangular $L$ such that: $A = L L^H$ (equivalently, upper triangular: $A = U^H U$).
+
+`potrf()` master function returns the triangular `factor` matrix alongside with its tag (`L` or `U`).
+```cpp
+auto res = potrf(A);
+
+Vector<double> b;
+potrs(res, b); // Solve A * x = b  (single RHS, in-place).
+
+Matrix<double> B;
+potrs(res, B); // Solve A * X = B  (multiple RHS, in-place).
+
+double ld = cholesky_logdet(res); // Compute logarithm of the determinant.
+
+auto Ainv = potri(res); // Matrix inverse.
+```
+*Note:* an in-depth look into the algorithm is provided in dedicated [reference file](/reference/CHOLESKY.md).
+
+---
 ### LU decomposition
 Blocked LU with partial pivoting. For original matrix $A$ finds $P$, $L$, $U$ such that: $PA = LU$. *Note:* for detailed account of the algorithm cf. the [reference](reference/LU.md).
 
@@ -252,16 +275,17 @@ res.piv // Pivot indices.
  
 // Connected functions:
 Vector<double> b;
-lu_solve(res, b); // Solve A * x = b  (single RHS, in-place)
+lu_solve(res, b); // Solve A * x = b  (single RHS, in-place).
 
 Matrix<double> B;
-lu_solve(res, B); // Solve A * X = B  (multiple RHS, in-place)
+lu_solve(res, B); // Solve A * X = B  (multiple RHS, in-place).
 
 double d = lu_det(res); // Determinant.
 
 auto Ainv = lu_inverse(res); // Inverse.
 ```
 
+---
 ### QR factorisation
 Householder QR with optional column pivoting. Uses a blocked compact-WY update for large matrices. Finds matrices satisfying: $AP = QR$ (note the column permutation - opposite convention from LU).
 
