@@ -54,6 +54,11 @@ namespace linalg {
         };
     };
 
+    /// @brief Least-squares solution of `A * x = b`.
+    /// @param A System's matrix.
+    /// @param b RHS vector.
+    /// @param tol Rank-detection tolerance.
+    /// @return `LstsqVecResult` object: solution `x`, `residual`, numerical `rank` estimate.
     template<typename T, Layout L>
     LstsqVecResult<T> lstsq(const Matrix<T, L>& A, const Vector<T>& b, double tol = -1.0) {
         const size_t m = A.rows();
@@ -80,5 +85,44 @@ namespace linalg {
         const double residual = (nb2 > nc2) ? nb2 - nc2 : 0.0;
 
         return { std::move(x), residual, r };
+    };
+
+    /// @brief Least-squares solution of `A * X = B`.
+    /// @param A System's matrix.
+    /// @param B RHS matrix.
+    /// @param tol Rank-detection tolerance.
+    /// @return `LstsqMatResult` object: solution `X`, per-column `residuals` vector, numerical `rank` estimate.
+    template<typename T, Layout L = Layout::RowMajor>
+    LstsqMatResult<T, L> lstsq(const Matrix<T, L>& A, const Matrix<T, L>& B, double tol = -1.0) {
+        const size_t m = A.rows();
+        const size_t n = A.cols();
+        const size_t nrhs = B.cols();
+        BOUNDS_CHECK(B.rows() == m);
+
+        QRResult<T, L> res = qr_pivoted(A, tol);
+        const int r = res.rank;
+        const size_t k = res.Q.cols();
+
+        Matrix<T, L> C(k, nrhs, T(0));
+        gemm(T(1), hermitian(res.Q), expr(B), T(0), C);
+
+        Matrix<T, L> Xp(n, nrhs, T(0));
+        for (size_t i = 0; i < static_cast<size_t>(r) && i < k; ++i)
+            for (size_t j = 0; j < nrhs; ++j) Xp(i, j) = C(i, j);
+        detail::triu_solve_mat(res.R, Xp, r);
+        // Undo column permuatation:
+        Matrix<T, L> X(n, nrhs, T(0));
+        for (size_t j = 0; j < n; ++j)
+            for (size_t col = 0; col < nrhs; ++col) X(res.piv[j], col) = Xp(j, col);
+        // Per-column residuals:
+        Vector<double> residuals(nrhs, 0.0);
+        for (size_t j = 0; j < n; ++j) {
+            double nb2 = 0.0, nc2 = 0.0;
+            for (size_t i = 0; i < m; ++i) nb2 += std::norm(B(i, j));
+            for (size_t i = 0; i < k; ++i) nc2 += std::norm(C(i, j));
+            residuals[j] = (nb2 > nc2) ? nb2 - nc2 : 0.0;
+        };
+
+        return { std::move(X), std::move(residuals), r };
     };
 };

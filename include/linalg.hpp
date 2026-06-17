@@ -27,6 +27,8 @@
 #include <linalg/decompositions/qr.hpp>
 #include <linalg/decompositions/cholesky.hpp>
 
+#include <linalg/solvers/lstsq.hpp>
+
 #include <string>
 #include <sstream>
 #include <iomanip>
