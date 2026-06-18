@@ -15,6 +15,7 @@
 
 #include <linalg/operations/vector_ops.hpp>
 #include <linalg/operations/matrix_ops.hpp>
+#include <linalg/operations/constructors.hpp>
 
 #include <linalg/blas/level1.hpp>
 #include <linalg/blas/level2.hpp>
