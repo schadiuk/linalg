@@ -107,4 +107,90 @@ namespace linalg {
             for (size_t j = 0; j < n; ++j) P(i, j) = static_cast<T>(detail::binom(i + j, i));
         return P;
     };
+
+    /// @brief Upper triangular Kahan matrix: `K(i,j) = -s^i * c^(j-i)` for `j > i`. 
+    /// @param n Matrix size.
+    /// @param theta Angle parameter: `s = sin(theta), c = cos(theta)`.
+    /// @param perturbation Diagonal offset: `K(i,i) = s^i + perturbation`.
+    /// @return `n * n` Kahan matrix.
+    /// @note Non-zero diagonal perturbation can break exact singularity.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> kahan(size_t n, double theta = std::numbers::pi / 2, double perturbation = 0.0) {
+        const double s = std::sin(theta), c = std::cos(theta);
+        Matrix<T, L> K(n, n, T(0));
+        std::vector<double> sp(n);
+        double si = 1.0;
+        for (size_t i = 0; i < n; ++i) { sp[i] = si; si *= s; };
+        for (size_t i = 0; i < n; ++i) {
+            K(i, i) = static_cast<T>(sp[i] + perturbation);
+            double cj = c;
+            for (size_t j = i + 1; j < n; ++j) {
+                K(i, j) = static_cast<T>(-sp[i] * cj);
+                cj *= c;
+            };
+        };
+        return K;
+    };
+
+    /// @brief Hilbert matrix: `H(i,j) = 1 / (i + j + 1)`.
+    /// @param n Matrix size.
+    /// @return `n * n` symmetric Hilbert matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> hilbert(size_t n) {
+        Matrix<T, L> H(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i)
+                for (size_t j = 0; j < n; ++j) H(i, j) = T(1) / static_cast<T>(i + j + 1);
+        });
+        return H;
+    };
+
+    /// @brief Lehmer matrix: `A(i, j) = min(i, j) / max(i, j)` (1-indexed formula).
+    /// @param n Matrix size.
+    /// @return `n * n` symmetric Lehmer matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> lehmer(size_t n) {
+        Matrix<T, L> A(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i ) {
+                const double ip1 = static_cast<double>(i + 1);
+                for (size_t j = 0; j < n; ++j) {
+                    const double jp1 = static_cast<double>(j + 1);
+                    A(i, j) = static_cast<T>(std::min(ip1, jp1) / std::max(ip1, jp1));
+                };
+            };
+        });
+        return A;
+    };
+
+    /// @brief Wilkinson matrix.
+    /// @param n Matrix size.
+    /// @return `n * n` tridiagonal matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> wilkinson(size_t n) {
+        Matrix<T, L> W(n, n, T(0));
+        const size_t half = n / 2;
+        for (size_t i = 0; i < n; ++i) {
+            W(i, i) = static_cast<T>(i < half ? half - i : i - half);
+            if (i + 1 < n) { W(i, i + 1) = T(1); W(i + 1, i) = T(1); };
+        };
+        return W;
+    };
+
+    /// @brief Frank matrix: `F(i,j) = n - max(i,j)` (1-indexed formula).
+    /// @param n Matrix size.
+    /// @return `n * n` Frank matrix.
+    /// @note Unit determinant for all `n`.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> frank(size_t n) {
+        Matrix<T, L> F(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for(size_t i = rs; i< re; ++i)
+                for (size_t j = 0; j < n; ++j) {
+                    const size_t m = std::max(i, j);
+                    if (n > m) F(i, j) = static_cast<T>(n - m);
+                };
+        });
+        return F;
+    };
 };
