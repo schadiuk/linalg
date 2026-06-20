@@ -15,6 +15,9 @@ namespace linalg {
     };
 
     namespace detail {
+        constexpr int EXCEPT_FREQ = 16; // Steps between exceptional shifts.
+        constexpr int MAX_ITER_PER_EIG = 32;
+
         struct BalanceInfo {
             Vector<double> scale; // log-base scaling exponent per index.
             Vector<size_t> perm;
@@ -205,7 +208,7 @@ namespace linalg {
 
             std::vector<Vector<DefaultScalar>> vs(K);
             std::vector<double> betas(K, 0.0);
-            Q = Matrix<DefaultScalar, L>::identity(n);
+            if (accumulate_q) Q = Matrix<DefaultScalar, L>::identity(n);
             if (K == 0) return {vs, betas};
 
             auto hess_left_apply = [&](const Vector<DefaultScalar>& v, double beta, size_t r0, size_t c0, size_t len, size_t ncols) {
@@ -249,6 +252,80 @@ namespace linalg {
             };
         
             return {vs, betas};
+        };
+
+        LINALG_INLINE
+        DefaultScalar wilkinson_shift(DefaultScalar a, DefaultScalar b, DefaultScalar c, DefaultScalar d) {
+            // Eigenvalues of [[a,b],[c,d]]:  (a+d)/2 +- sqrt(((a-d)/2)^2 + b*c).
+            const DefaultScalar tr = a + d;
+            const DefaultScalar disc  = (a - d) * (a - d) / 4.0 + b * c;
+            const DefaultScalar sqrtd = std::sqrt(disc);
+            const DefaultScalar l1 = tr / 2.0 + sqrtd;
+            const DefaultScalar l2 = tr / 2.0 - sqrtd;
+            // Return the one closest to d:
+            return (std::abs(l1 - d) <= std::abs(l2 - d)) ? l1 : l2;
+        };
+
+        /// @brief Applies one Francis step to the active submatrix window `H[p:q+1, p:q+1]`.
+        /// @param H Hessenberg matrix input.
+        /// @param Q_iter `n * n` Schur vector accumulator.
+        /// @param p 
+        /// @param q 
+        /// @param mu Shift value.
+        template<Layout L>
+        void francis_step(Matrix<DefaultScalar, L>& H, Matrix<DefaultScalar, L>& Q_iter, size_t p, size_t q, DefaultScalar mu) {
+            const size_t n = H.rows();
+            const bool accQ = (Q_iter.rows() == n);
+            // First Householder application: reflect the 2-vector [H[p,p]-mu, H[p+1,p]] to [r, 0].
+            DefaultScalar x0 = H(p, p) - mu;
+            DefaultScalar x1 = H(p + 1, p);
+            Vector<DefaultScalar> x2(2); x2[0] = x0; x2[1] = x1;
+            auto [v, beta] = householder_reflector(x2);
+    
+            if (beta != 0.0) {
+                const size_t left_ncols = n - p;
+                apply_householder_left(H, v, beta, p, 2, left_ncols);
+                // Right application:
+                const DefaultScalar b = static_cast<DefaultScalar>(beta);
+                const size_t nrows_right = q + 1;
+                Vector<DefaultScalar> w(nrows_right, DefaultScalar(0));
+                for (size_t i = 0; i < nrows_right; ++i)
+                    for (size_t jj = 0; jj < 2; ++jj) w[i] += H(i, p + jj) * v[jj];
+                for (size_t i = 0; i < nrows_right; ++i)
+                    for (size_t jj = 0; jj < 2; ++jj) H(i, p + jj) -= b * w[i] * conj(v[jj]);
+                
+                if (accQ) apply_householder_right(Q_iter, v, beta, p, 2);
+            };
+            
+            for (size_t k = p; k + 2 <= q; ++k) {
+                DefaultScalar x0 = H(k + 1, k);
+                DefaultScalar x1 = H(k + 2, k);
+                Vector<DefaultScalar> x2(2); x2[0] = x0; x2[1] = x1;
+                auto [v, beta] = householder_reflector(x2);
+                
+                if (beta == 0.0) { H(k + 2, k) = DefaultScalar(0); continue; };
+        
+                // Left-apply to H[k+1:k+3, k:n] (row start k+1, col start k).
+                const DefaultScalar b = static_cast<DefaultScalar>(beta);
+                const size_t ncols_left = n - k;
+                Vector<DefaultScalar> wl(ncols_left, DefaultScalar(0));
+                for (size_t j = 0; j < ncols_left; ++j) wl[j] = conj(v[0]) * H(k+1, k+j) + conj(v[1]) * H(k+2, k+j);
+                for (size_t j = 0; j < ncols_left; ++j) {
+                    H(k+1, k+j) -= b * v[0] * wl[j];
+                    H(k+2, k+j) -= b * v[1] * wl[j];
+                };
+
+                H(k + 2, k) = DefaultScalar(0); // Enforce zero.
+                // Right-apply to H[0:q+1, k+1:k+3] (rows 0...q):
+                    //const DefaultScalar b = static_cast<DefaultScalar>(beta);
+                    const size_t nrows_right = q + 1;
+                    Vector<DefaultScalar> w(nrows_right, DefaultScalar(0));
+                    for (size_t i = 0; i < nrows_right; ++i)
+                        for (size_t jj = 0; jj < 2; ++jj) w[i] += H(i, k + 1 + jj) * v[jj];
+                    for (size_t i = 0; i < nrows_right; ++i)
+                        for (size_t jj = 0; jj < 2; ++jj) H(i, k + 1 + jj) -= b * w[i] * conj(v[jj]);
+                if (accQ) apply_householder_right(Q_iter, v, beta, k + 1, 2);
+            };
         };
     };
 };
