@@ -240,12 +240,12 @@ namespace linalg {
                 apply_householder_right(A, v, beta, k_abs + 1, len);
             };
 
-            for (size_t k = 0; k < K; ++k) unblocked_step(ilo + K);
+            for (size_t k = 0; k < K; ++k) unblocked_step(ilo + k);
             if (accumulate_q) {
                 for (size_t k = 0; k < K; ++k) {
                     if (betas[k] == 0.0) continue;
                     const size_t k_abs = ilo + k;
-                    const size_t len   = ihi + 1 - (k_abs + 1);
+                    const size_t len = ihi + 1 - (k_abs + 1);
                     // Right-apply to Q: updates columns k_abs+1 through ihi.
                     apply_householder_right(Q, vs[k], betas[k], k_abs + 1, len);
                 };
@@ -327,5 +327,143 @@ namespace linalg {
                 if (accQ) apply_householder_right(Q_iter, v, beta, k + 1, 2);
             };
         };
+
+        template<Layout L>
+        bool qr_iteration(Matrix<DefaultScalar, L>& H, Matrix<DefaultScalar, L>& Q_iter, size_t ilo, size_t ihi) {
+            if (ihi <= ilo) return true;
+            const double eps = std::numeric_limits<double>::epsilon();
+            // Thread-local RNG for exceptional shifts.
+            std::mt19937_64 rng(0x9e3779b97f4a7c15ULL);
+            std::uniform_real_distribution<double> udist(-1.0, 1.0);
+            size_t q = ihi; // Top of active window deflates one step at a time.
+            int since_deflation = 0; // Steps since last deflation (for exceptional shifts).
+            while (q > ilo) {
+                // Find the largest p such that H[p:q+1, p:q+1] is unreduced (no small subdiagonals).
+                size_t p = q;
+                while (p > ilo) {
+                    const double tol = eps * (std::abs(H(p - 1, p - 1)) + std::abs(H(p, p)));
+                    if (std::abs(H(p, p - 1)) <= tol) {
+                        H(p, p - 1) = DefaultScalar(0);
+                        break;
+                    };
+                    --p;
+                };
+
+                if (p == q) { --q; since_deflation = 0; continue; };
+
+                DefaultScalar mu;
+                if (since_deflation > 0 && since_deflation % EXCEPT_FREQ == 0) {
+                    // Exceptional shift: random perturbation scaled by spectral radius estimate.
+                    const double scale = std::abs(H(q, q)) + std::abs(H(q, q - 1));
+                    mu = DefaultScalar(scale * udist(rng), scale * udist(rng));
+                } else {
+                    mu = wilkinson_shift(H(q - 1, q - 1), H(q - 1, q), H(q, q - 1), H(q, q));
+                };
+                // Apply one Francis step to H[p:q+1, p:q+1] window.
+                francis_step(H, Q_iter, p, q, mu);
+                ++since_deflation;
+        
+                // Check for new deflation at bottom of active window
+                const double tol = eps * (std::abs(H(q - 1, q - 1)) + std::abs(H(q, q)));
+                if (std::abs(H(q, q - 1)) <= tol) {
+                    H(q, q - 1) = DefaultScalar(0);
+                    --q;
+                    since_deflation = 0;
+                };
+                
+                // Iteration limit guard (per eigenvalue, not per step)
+                if (since_deflation > static_cast<int>(q - ilo + 1) * MAX_ITER_PER_EIG)
+                    return false;  // failed to converge
+            };
+            return true;
+        };
+    };
+
+    /// @brief General Schur decomposition.
+    /// @param A Input matrix (complex-valued).
+    /// @param compute_vectors
+    /// @param balance Balancing flag.
+    /// @return `SchurResult` structure.
+    template<Layout L = Layout::RowMajor>
+    SchurResult<L> schur(const Matrix<DefaultScalar, L>& A, bool compute_vectors = true, bool balance = true) {
+        const size_t n = A.rows();
+        BOUNDS_CHECK(A.cols() == n);
+        SchurResult<L> res;
+        Matrix<DefaultScalar, L> H = A; // Working copy.
+        Matrix<DefaultScalar, L> Q(0, 0); // Hessenberg Q (accumulation on request).
+
+        const bool do_balance = balance && n > 1 && !compute_vectors;
+        size_t ilo = 0, ihi = (n > 0) ? n - 1 : 0;
+        detail::BalanceInfo bi;
+        if (do_balance) {
+            bi = detail::balance(H);
+            ilo = bi.ilo;
+            ihi = bi.ihi;
+            res.balanced = true;
+            res.balance_scale = bi.scale;
+            res.balance_perm = bi.perm;
+        };
+
+        Matrix<DefaultScalar, L> Q_hess(0, 0);
+        auto [vs, betas] = detail::hessenberg_reduce<DefaultScalar, L>(H, ilo, ihi, compute_vectors, Q_hess);
+    
+        Matrix<DefaultScalar, L> Q_iter(0, 0);
+        if (compute_vectors) Q_iter = Matrix<DefaultScalar, L>::identity(n);
+    
+        if (n > 1) detail::qr_iteration(H, Q_iter, ilo, ihi);
+
+        if (compute_vectors) {
+            // Q = Q_hess * Q_iter.
+            Matrix<DefaultScalar, L> Q_full(n, n, DefaultScalar(0));
+            gemm(DefaultScalar(1), expr(Q_hess), expr(Q_iter), DefaultScalar(0), Q_full);
+            res.Q = std::move(Q_full);
+        };
+
+        res.T = std::move(H);
+        res.eigvals = Vector<DefaultScalar>(n);
+        for (size_t i = 0; i < n; ++i) res.eigvals[i] = res.T(i, i);
+        return res;
+    };
+
+    template<Layout L = Layout::RowMajor>
+    SchurResult<L> schur(const Matrix<double, L>& A, bool compute_vectors = true, bool balance = true) {
+        const size_t n = A.rows();
+        Matrix<std::complex<double>, L> Ac(n, n);
+        for (size_t i = 0; i < n; ++i)
+            for (size_t j = 0; j < n; ++j) Ac(i, j) = std::complex<double>(A(i, j), 0.0);
+        return schur(Ac, compute_vectors, balance);
+    };
+
+    template<Layout L = Layout::RowMajor, typename E>
+    SchurResult<L> schur(const MatExpr<E>& A_expr, bool compute_vectors = true, bool balance = true) {
+        using raw_t = std::remove_cvref_t<decltype(A_expr.self()(0, 0))>;
+        // If the expression already yields complex<double>, materialise directly:
+        if constexpr (std::is_same_v<raw_t, std::complex<double>>) {
+            return schur(Matrix<std::complex<double>, L>(A_expr), compute_vectors, balance);
+        } else {
+            const size_t m = A_expr.self().rows(), nc = A_expr.self().cols();
+            Matrix<std::complex<double>, L> Ac(m, nc);
+            for (size_t i = 0; i < m; ++i)
+                for (size_t j = 0; j < nc; ++j)
+                    Ac(i, j) = std::complex<double>(
+                        static_cast<double>(std::real(A_expr.self()(i, j))),
+                        static_cast<double>(std::imag(A_expr.self()(i, j))));
+            return schur(Ac, compute_vectors, balance);
+        };
+    };
+
+    template<Layout L = Layout::RowMajor, typename E>
+    Vector<std::complex<double>> eigenvalues(const MatExpr<E>& A) {
+        return schur<L>(A, /*compute_vectors=*/false, /*balance=*/true).eigvals;
+    };
+    
+    template<Layout L = Layout::RowMajor>
+    Vector<std::complex<double>> eigenvalues(const Matrix<double, L>& A) {
+        return schur<L>(A, false, true).eigvals;
+    };
+    
+    template<Layout L = Layout::RowMajor>
+    Vector<std::complex<double>> eigenvalues(const Matrix<std::complex<double>, L>& A) {
+        return schur<L>(A, false, true).eigvals;
     };
 };
