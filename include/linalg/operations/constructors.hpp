@@ -177,7 +177,7 @@ namespace linalg {
         return W;
     };
 
-    /// @brief Frank matrix: `F(i,j) = n - max(i,j)` (1-indexed formula).
+    /// @brief Frank matrix: `F(i, j) = n - max(i, j)` (1-indexed formula).
     /// @param n Matrix size.
     /// @return `n * n` Frank matrix.
     /// @note Unit determinant for all `n`.
@@ -192,5 +192,95 @@ namespace linalg {
                 };
         });
         return F;
+    };
+
+    /// @brief Redheffer matrix: `R(i, j) = 1` if `j == 1` or `i` divides `j` (1-indexed formula).
+    /// @param n Matrix size.
+    /// @return `n * n` Redheffer matrix.
+    /// @note Determinant is given by the Mertens function of order `n`.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> redheffer(size_t n) {
+        Matrix<T, L> R(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                R(i, 0) = T(1);
+                for (size_t j = 1; j < n; ++j) if ((j + 1) % (i + 1) == 0) R(i, j) = T(1);
+            };
+        });
+        return R;
+    };
+
+    /// @brief Hadamard matrix: mutually orthogonal rows; entries are either `+1` or `-1`.
+    /// @param n Matrix size (required to be a power of 2).
+    /// @return `n * n` symmetric Hadamard matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> hadamard(size_t n) {
+        if (n == 0 || n & (n + 1) != 0) throw std::invalid_argument("hadamard: n must be a positve power of 2.");
+        Matrix<T, L> H(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i)
+                for (size_t j = 0; j < n; ++j)
+                    H(i, j) = (std::popcount(static_cast<unsigned long long>(i & j)) & 1) ? T(-1) : T(1);
+        });
+        return H;
+    };
+
+    /// @brief Constructor: tridiagonal matrix.
+    /// @param dl Sub-diagonal (length `n - 1`).
+    /// @param d Main diagonal (length `n`).
+    /// @param du Super-diagonal.
+    /// @return `n * n` tridiagonal matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> tridiagonal(const Vector<T>& dl, const Vector<T>& d, const Vector<T>& du) {
+        const size_t n = d.size();
+        BOUNDS_CHECK(dl.size() == n - 1 && du.size() == n - 1);
+        Matrix<T, L> A(n, n, T(0));
+        for (size_t i = 0; i < n; ++i) {
+            A(i, i) = d[i];
+            if (i > 0) A(i, i - 1) = dl[i - 1];
+            if (i + 1 < n) A(i, i + 1) = du[i];
+        };
+        return A;
+    };
+
+    /// @brief Constructor: bidiagonal matrix.
+    /// @param d Main diagonal (length `n`).
+    /// @param e Off-diagonal entries (length `n - 1`).
+    /// @param upper Upper/lower sub-diagonal flag.
+    /// @return `n * n` bidiagonal matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> bidiagonal(const Vector<T>& d, const Vector<T>& e, bool upper = true) {
+        const size_t n = d.size();
+        BOUNDS_CHECK(e.size() == n - 1);
+        Matrix<T, L> B(n, n, T(0));
+        for (size_t i = 0; i < n; ++i) {
+            B(i, i) = d[i];
+            if (i + 1 < n) {
+                if (upper) B(i, i + 1) = e[i];
+                else B(i + 1, i) = e[i];
+            };
+        };
+        return B;
+    };
+
+    /// @brief Constructor: "arrowhead" matrix.
+    /// @param d Diagonal entries (length `n - 1`).
+    /// @param c Last column (length `n - 1`).
+    /// @param r Last row (length `n - 1`).
+    /// @param alpha Corner entry: `A(n, n) = alpha`.
+    /// @return `n * n` matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> arrowhead(const Vector<T>& d, const Vector<T>& c, const Vector<T>& r, T alpha) {
+        const size_t nm = d.size();
+        BOUNDS_CHECK(c.size() == nm && r.size() == nm);
+        const size_t n = nm + 1;
+        Matrix<T, L> A(n, n, T(0));
+        for (size_t i = 0; i < nm; ++i) {
+            A(i, i) = d[i];
+            A(i, nm) = c[i];
+            A(nm, i) = r[i];
+        };
+        A(nm, nm) = alpha;
+        return A;
     };
 };
