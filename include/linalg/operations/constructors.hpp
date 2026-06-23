@@ -283,4 +283,92 @@ namespace linalg {
         A(nm, nm) = alpha;
         return A;
     };
+
+    /// @brief Standard Vandermonde matrix: `V(i, j) = x[i]^j`.
+    /// @param x Input vector (length `m`).
+    /// @param n Number of columns (default `m`).
+    /// @return `m * n` Vandermonde matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> vandermonde(const Vector<T>& x, size_t n = 0) {
+        const size_t m = x.size();
+        if (n == 0) n = m;
+        BOUNDS_CHECK(n > 0 && m > 0);
+        Matrix<T, L> V(m, n, T(0));
+        parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                T pk = T(1);
+                for (size_t j = 0; j < n; ++j) {
+                    V(i, j) = pk;
+                    pk *= x[i];
+                };
+            };
+        });
+        return V;
+    };
+
+    /// @brief Generalised Vandermonde matrix: `V(i, j) = x[i]^{alpha[j]}`. 
+    /// @param x Input vector (length `m`).
+    /// @param alpha Exponent vector (length `n`).
+    /// @return `m * n` matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> vandermonde_gen(const Vector<T>& x, const Vector<T>& alpha) {
+        const size_t m = x.size(), n = alpha.size();
+        BOUNDS_CHECK(m > 0 && n > 0);
+        Matrix<T, L> V(m, n, T(0));
+        parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i)
+                for (size_t j = 0; j < n; ++j) V(i, j) = std::pow(x[i], alpha[j]);
+        });
+        return V;
+    };
+
+    /// @brief Rank-1 outer product matrix: `A(i, j) = x[i] * y[j]`.
+    /// @param x Input vector (length `m`).
+    /// @param y Input vector (length `n`).
+    /// @return `m * n` matrix.
+    /// @note Not to be confused with BLAS `ger` (which accumulates).
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> outer(const Vector<T>& x, const Vector<T>& y) {
+        const size_t m = x.size(), n = y.size();
+        BOUNDS_CHECK(m > 0 && n > 0);
+        Matrix<T, L> A(m, n, T(0));
+        parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i) {
+                const T xi = x[i];
+                for (size_t j = 0; j < n; ++j) A(i, j) = xi * y[j];
+            };
+        });
+        return A;
+    };
+
+    /// @brief Distance matrix: `D(i, j) = |x[i] - x[j]|`.
+    /// @param x Input vector (length `n`).
+    /// @return `n * n` symmetric distance matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> distance(const Vector<T>& x) {
+        const size_t n = x.size();
+        BOUNDS_CHECK(n > 0);
+        Matrix<T, L> D(n, n, T(0));
+        parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i)
+                for (size_t j = 0; j < n; ++j) D(i, j) = static_cast<T>(std::abs(x[i] - x[j]));
+        });
+        return D;
+    };
+
+    /// @brief Distance matrix: `D(i, j) = |x[i] - y[j]|`.
+    /// @param x Input vector (length `m`).
+    /// @param y Input vector (length `n`).
+    /// @return `m * n` matrix.
+    template <typename T, Layout L = Layout::RowMajor>
+    Matrix<T, L> distance(const Vector<T>& x, const Vector<T>& y) {
+        const size_t m = x.size(), n = y.size();
+        BOUNDS_CHECK(m > 0 && n > 0);
+        Matrix<T, L> D(m, n, T(0));
+        parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+            for (size_t i = rs; i < re; ++i)
+                for (size_t j = 0; j < n; ++j) D(i, j) = static_cast<T>(std::abs(x[i] - y[j]));
+        });
+        return D;
+    };
 };
