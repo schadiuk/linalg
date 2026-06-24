@@ -284,6 +284,79 @@ namespace linalg {
         return A;
     };
 
+    /// @brief Moler matrix: `M(i, j) = min(i, j) - 2`, diagonal is `M(i, i) = i`(1-indexed).
+    /// @param n Matrix size.
+    /// @return `n * n` symmetric matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> moler(size_t n) {
+        Matrix<T, L> M(n, n, T(0));
+        for (size_t i = 0; i < n; ++i) {
+            M(i, i) = static_cast<T>(i + 1);
+            for (size_t j = 0; j < n; ++j) {
+                const double ip1 = static_cast<double>(i + 1);
+                const double jp1 = static_cast<double>(j + 1);
+                if (i != j) M(i, j) = static_cast<T>(std::min(ip1, jp1) - 2.0);
+            };
+        };
+        return M;
+    };
+
+    /// @brief Grcar matrix: `G(i, i + j) = 1` for `j` in `{-1,0,1...k}`.
+    /// @param n Matrix size.
+    /// @param k Number of nonzero super-diagonals (default `k = 3`).
+    /// @return `n * n` matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> grcar(size_t n, size_t k = 3) {
+        Matrix<T, L> G(n, n, T(0));
+        for (size_t i = 0; i < n; ++i) {
+            if (i > 0) G(i, i - 1) = T(-1); // Sub-diagonal.
+            for (size_t j = i; j < n && j <= i + k; ++j) G(i, j) = T(1);
+        };
+        return G;
+    };
+
+    /// @brief Lotkin matrix: Hilbert matrix with first row made unit.
+    /// @param n Matrix size.
+    /// @return Symmetric `n * n` matrix.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> lotkin(size_t n) {
+        auto A = hilbert<T, L>(n);
+        for (size_t j = 0; j < n; ++j) A(0, j) = T(1);
+        return A;
+    };
+
+    /// @brief Clement matrix: `C(i, i) = 0`, `C(i, i-1) = i-1`, `C(i, i+1) = i+1`.
+    /// @param n Matrix size.
+    /// @param symmetric When set to `true`, replaces the off-diagonals with their geometric means.
+    /// @return `n * n` tridiagonal matrix.
+    /// @note Singular for odd `n`.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> clement(size_t n, bool symmetric = false) {
+        Matrix<T, L> C(n, n, T(0));
+        for (size_t i = 0; i + 1 < n; ++i) {
+            double lower = static_cast<double>(i + 1);
+            double upper = static_cast<double>(n - i - 1);
+            double v;
+            if (symmetric) v = std::sqrt(lower * upper);
+            else v = lower;
+            C(i, i + 1) = static_cast<T>(v);
+            C(i + 1, i) = static_cast<T>(v);
+        };
+        return C;
+    };
+
+    /// @brief Pei matrix: `P = alpha * I + ones * ones^T`.
+    /// @param n Matrix size.
+    /// @param alpha Scaling factor.
+    /// @return `n * n` matrix.
+    /// @note Eigenvalues are `alpha + n` (single) and `alpha`.
+    template <typename T = double, Layout L = Layout::RowMajor>
+    Matrix<T, L> pei(size_t n, T alpha = T(1)) {
+        Matrix<T, L> P(n, n, T(1));
+        for (size_t i = 0; i < n; ++i) P(i, i) += alpha;
+        return P;
+    };
+
     /// @brief Standard Vandermonde matrix: `V(i, j) = x[i]^j`.
     /// @param x Input vector (length `m`).
     /// @param n Number of columns (default `m`).
