@@ -17,6 +17,7 @@ namespace linalg {
     namespace detail {
         constexpr int EXCEPT_FREQ = 16; // Steps between exceptional shifts.
         constexpr int MAX_ITER_PER_EIG = 32;
+        constexpr size_t HESS_BLOCK = 64; // Panel width for blocked Q accumulation.
 
         struct BalanceInfo {
             Vector<double> scale; // log-base scaling exponent per index.
@@ -89,7 +90,6 @@ namespace linalg {
 
             // Phase 2: diagonal scaling on the [ilo, ihi] submatrix.
             static constexpr double BASE = 2.0;
-            static constexpr double BETA = 0.95; // Convergence threshold.
             static constexpr int MAXP = 10; // Maximum for repeated passes computing row-norm and col-norm.
             if (ilo < ihi) {
                 for (int pass = 0; pass < MAXP; ++pass) {
@@ -128,130 +128,102 @@ namespace linalg {
             return BalanceInfo{ std::move(scale), std::move(perm), ilo, ihi };
         };
 
-        /// @brief Balancing revert.
-        /// @param Q Schur vector matrix.
-        /// @param bi `BalanceInfo` instance.
-        /// @note `Q_balanced = D * Q * D^{-1}` (column scaling).
+        /// @brief Apply the block WY product `I − V T^H V^H` from the right to Q window.
+        /// @param Q `n * n` Schur vector accumulator.
+        /// @param vs Reflector vectors.
+        /// @param T_mat `nb * nb` upper triangular WY factor.
+        /// @param kidx First index into `vs[]` for this panel (`kb` in outer loop).
+        /// @param nb Number of reflectors in this panel.
+        /// @param ihi Last active row/column index.
+        /// @param kabs_beg Absolute column index of the first panel column.
         template<Layout L>
-        void unbalance(Matrix<DefaultScalar, L>& Q, const BalanceInfo& bi) {
+        void hess_wy_q_update(Matrix<DefaultScalar, L>& Q, const std::vector<Vector<DefaultScalar>>& vs, const Matrix<DefaultScalar, L>& T_mat,
+                size_t kidx, size_t nb, size_t ihi, size_t kabs_beg) {
             const size_t n = Q.rows();
-            const size_t np = bi.perm.size();
-            Vector<size_t> inv_perm(np);
-            for (size_t i = 0; i < np; ++i) inv_perm[bi.perm[i]] = i;
-            for (size_t j = 0; j < n; ++j) {
-                const double f = std::exp2(bi.scale[j]);
-                for (size_t i = 0; i < n; ++i) Q(i, j) *= f;
-            };
+            const size_t len_V = ihi - kabs_beg;
+            if (len_V == 0 || nb == 0) return;
 
-            std::vector<size_t> p(n);
-            for (size_t i = 0; i < n; ++i) p[i] = i;
-            for (size_t i = 0; i < n; ++i) {
-                if (bi.perm[i] != i) {
-                    for (size_t j = i+1; j < n; ++j) {
-                        if (p[j] == bi.perm[i]) { std::swap(p[i], p[j]); break; };
-                    };
-                };
-            };
-
-            std::vector<size_t> inv_p(n);
-            for (size_t i = 0; i < n; ++i) inv_p[p[i]] = i;
-            Matrix<DefaultScalar, L> Q_tmp(n, n);
-            for (size_t i = 0; i < n; ++i)
-                for (size_t j = 0; j < n; ++j) Q_tmp(i, j) = Q(inv_p[i], j);
-            
-            Q = Q_tmp;
-        };
-
-        // Compact-WY trailing update.
-        template<typename T, Layout L>
-        void apply_wy_right(Matrix<T, L>& W, const std::vector<Vector<T>>& vs, const Matrix<T, L>& T_mat, size_t k, size_t nb, size_t i0) {
-            const size_t m = W.rows();
-            const size_t n = W.cols();
-            const size_t len = m - k;
-            const size_t nrows_trail = (i0 < n) ? n - i0 : 0;
-            if (nrows_trail == 0 || len == 0 || nb == 0) return;
-
-            Matrix<T, L> V(len, nb, T(0));
+            Matrix<DefaultScalar, L> V(len_V, nb, DefaultScalar(0));
             for (size_t j = 0; j < nb; ++j) {
-                const Vector<T>& vj = vs[k + j];
+                const auto& vj = vs[kidx + j];
                 for (size_t i = 0; i < vj.size(); ++i) V(i + j, j) = vj[i];
             };
+ 
+            // Extract W_Q = Q[0:n, kabs_beg+1 : ihi+1]  (n × len_V).
+            const size_t col0 = kabs_beg + 1;
+            Matrix<DefaultScalar, L> W_Q(n, len_V);
+            for (size_t i = 0; i < n; ++i)
+                for (size_t j = 0; j < len_V; ++j) W_Q(i, j) = Q(i, col0 + j);
 
-            const size_t copy_thresh = std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (len + 1));
-            Matrix<T, L> W_trail(nrows_trail, len);
-            parallel_for(nrows_trail, copy_thresh, [&](size_t rs, size_t re) {
-                for (size_t i = rs; i < re; ++i)
-                    for (size_t jj = 0; jj < len; ++jj) W_trail(i, jj) = W(i0 + i, k + jj);
-            });
-            // GEMM 1: C = W_trail * V (nrows_trail * nb).
-            Matrix<T, L> C(nrows_trail, nb, T(0));
-            gemm(T(1), expr(W_trail), expr(V), T(0), C);
-            // GEMM 2: CS = C * T_mat^H (nrows_trail * nb).
-            Matrix<T, L> CS(nrows_trail, nb, T(0));
-            gemm(T(1), expr(C), hermitian(T_mat), T(0), CS);
-            // GEMM 3: W_trail -= CS * V^H.
-            gemm(-T(1), expr(CS), hermitian(V), T(1), W_trail);
-            // Write W_trail back into W[i0:nrows, k:m].
-            parallel_for(nrows_trail, copy_thresh, [&](size_t rs, size_t re) {
-                for (size_t i = rs; i < re; ++i)
-                    for (size_t jj = 0; jj < len; ++jj) W(i0 + i, k + jj) = W_trail(i, jj);
-            });
+            Matrix<DefaultScalar, L> C(n, nb, DefaultScalar(0));
+            gemm(DefaultScalar(1), expr(W_Q), expr(V), DefaultScalar(0), C);
+            Matrix<DefaultScalar, L> CS(n, nb, DefaultScalar(0));
+            gemm(DefaultScalar(1), expr(C), expr(T_mat), DefaultScalar(0), CS);
+            gemm(-DefaultScalar(1), expr(CS), hermitian(V), DefaultScalar(1), W_Q);
+
+            for (size_t i = 0; i < n; ++i)
+                for (size_t j = 0; j < len_V; ++j) Q(i, col0 + j) = W_Q(i, j);
         };
 
-        /// @brief In-place reduction to upper Hessenberg form.
-        template<typename T, Layout L>
-        std::pair<std::vector<Vector<DefaultScalar>>, std::vector<double>>
-        hessenberg_reduce(Matrix<DefaultScalar>& A, size_t ilo, size_t ihi, bool accumulate_q, Matrix<DefaultScalar, L>& Q) {
+        /// @brief In-place reduction to upper Hessenberg form. 
+        template<Layout L>
+        void hessenberg_reduce(Matrix<DefaultScalar, L>& A, size_t ilo, size_t ihi, bool accumulate_q, Matrix<DefaultScalar, L>& Q) {
             const size_t n = A.rows();
             const size_t nsub = (ihi >= ilo) ? ihi - ilo + 1 : 0;
             const size_t K = (nsub > 1) ? nsub - 1 : 0;
-
+            if (accumulate_q) Q = Matrix<DefaultScalar, L>::identity(n);
+            if (K == 0) return;
+            // Store all reflectors for the blocked Q accumulation pass.
             std::vector<Vector<DefaultScalar>> vs(K);
             std::vector<double> betas(K, 0.0);
-            if (accumulate_q) Q = Matrix<DefaultScalar, L>::identity(n);
-            if (K == 0) return {vs, betas};
-
-            auto hess_left_apply = [&](const Vector<DefaultScalar>& v, double beta, size_t r0, size_t c0, size_t len, size_t ncols) {
-                if (beta == 0.0 || len == 0 || ncols == 0) return;
+ 
+            // Left application helper:
+            auto hess_left_apply = [&](const Vector<DefaultScalar>& v, double beta, size_t k_abs) {
+                if (beta == 0.0) return;
+                const size_t len = ihi + 1 - (k_abs + 1);
+                const size_t ncols = n - k_abs;
                 const DefaultScalar b = static_cast<DefaultScalar>(beta);
                 Vector<DefaultScalar> w(ncols, DefaultScalar(0));
                 for (size_t j = 0; j < ncols; ++j)
-                    for (size_t i = 0; i < len; ++i) w[j] += conj(v[i]) * A(r0 + i, c0 + j);
-                // A[r0+i, c0+j] -= beta * v[i] * w[j]:
+                    for (size_t i = 0; i < len; ++i) w[j] += conj(v[i]) * A(k_abs + 1 + i, k_abs + j);
                 for (size_t i = 0; i < len; ++i)
-                    for (size_t j = 0; j < ncols; ++j) A(r0 + i, c0 + j) -= b * v[i] * w[j];
+                    for (size_t j = 0; j < ncols; ++j) A(k_abs + 1 + i, k_abs + j) -= b * v[i] * w[j];
             };
-        
+ 
+            // Unblocked column step:
             auto unblocked_step = [&](size_t k_abs) {
+                const size_t kidx = k_abs - ilo;
                 const size_t len = ihi + 1 - (k_abs + 1);
                 if (len < 1) return;
-                // Extract column segment A[k_abs+1 : ihi+1, k_abs]:
+                // Reflector from subdiagonal of column k_abs.
                 Vector<DefaultScalar> x(len);
                 for (size_t i = 0; i < len; ++i) x[i] = A(k_abs + 1 + i, k_abs);
                 auto [v, beta] = householder_reflector(x);
-                const size_t kidx = k_abs - ilo;
                 vs[kidx] = v;
                 betas[kidx] = beta;
-        
                 if (beta == 0.0) return;
-                hess_left_apply(v, beta, k_abs + 1, k_abs, len, n - k_abs);
-                // Enforce exact zeros below subdiagonal in this column:
+                hess_left_apply(v, beta, k_abs);
+                // Enforce exact zeros below subdiagonal:
                 for (size_t i = k_abs + 2; i <= ihi; ++i) A(i, k_abs) = DefaultScalar(0);
                 apply_householder_right(A, v, beta, k_abs + 1, len);
             };
-
-            for (size_t k = 0; k < K; ++k) unblocked_step(ilo + k);
-            if (accumulate_q) {
-                for (size_t k = 0; k < K; ++k) {
-                    if (betas[k] == 0.0) continue;
-                    const size_t k_abs = ilo + k;
-                    const size_t len = ihi + 1 - (k_abs + 1);
-                    // Right-apply to Q: updates columns k_abs+1 through ihi.
-                    apply_householder_right(Q, vs[k], betas[k], k_abs + 1, len);
-                };
+ 
+            if (!accumulate_q) { // No Q needed: fully unblocked, discard reflectors.
+                for (size_t k = 0; k < K; ++k) unblocked_step(ilo + k);
+                return;
             };
-        
-            return {vs, betas};
+ 
+            // Blocked path: unblocked H + blocked WY for Q.
+            for (size_t kb = 0; kb < K; kb += HESS_BLOCK) {
+                const size_t nb = std::min(HESS_BLOCK, K - kb);
+                const size_t kabs_beg = ilo + kb;
+                // Phase 1: unblocked reduction of this panel (H update).
+                for (size_t j = 0; j < nb; ++j) unblocked_step(kabs_beg + j);
+                // Phase 2: build compact WY T-factor for the nb reflectors.
+                const Matrix<DefaultScalar, L> T_mat = larft<DefaultScalar, L>(vs, betas, kb, nb);
+                // Phase 3: blocked WY right-apply to Q[0:n, kabs_beg+1:ihi+1].
+                hess_wy_q_update(Q, vs, T_mat, kb, nb, ihi, kabs_beg);
+            };
         };
 
         LINALG_INLINE
@@ -266,77 +238,99 @@ namespace linalg {
             return (std::abs(l1 - d) <= std::abs(l2 - d)) ? l1 : l2;
         };
 
-        /// @brief Applies one Francis step to the active submatrix window `H[p:q+1, p:q+1]`.
-        /// @param H Hessenberg matrix input.
-        /// @param Q_iter `n * n` Schur vector accumulator.
-        /// @param p 
-        /// @param q 
-        /// @param mu Shift value.
         template<Layout L>
         void francis_step(Matrix<DefaultScalar, L>& H, Matrix<DefaultScalar, L>& Q_iter, size_t p, size_t q, DefaultScalar mu) {
             const size_t n = H.rows();
-            const bool accQ = (Q_iter.rows() == n);
-            // First Householder application: reflect the 2-vector [H[p,p]-mu, H[p+1,p]] to [r, 0].
-            DefaultScalar x0 = H(p, p) - mu;
-            DefaultScalar x1 = H(p + 1, p);
+            const bool   accQ = (Q_iter.rows() == n);
+            const size_t nr_H = q + 1;  // Rows updated in H right-apply.
+            const size_t nc_Hl = n - p;  // Columns updated in H left-apply (initial step).
+ 
+            // Pre-allocate work buffers once; reused for every sub-step of the chase.
+            // This eliminates O(winsize) heap allocations per Francis step.
+            std::vector<DefaultScalar, AlignedAllocator<DefaultScalar>> wH(n, DefaultScalar(0));
+            std::vector<DefaultScalar, AlignedAllocator<DefaultScalar>> wQ(n, DefaultScalar(0));
+            DefaultScalar* LINALG_RESTRICT wHp = detail::assume_aligned<64>(wH.data());
+            DefaultScalar* LINALG_RESTRICT wQp = detail::assume_aligned<64>(wQ.data());
+
+            DefaultScalar x0 = H(p, p) - mu, x1 = H(p + 1, p);
             Vector<DefaultScalar> x2(2); x2[0] = x0; x2[1] = x1;
             auto [v, beta] = householder_reflector(x2);
-    
             if (beta != 0.0) {
-                const size_t left_ncols = n - p;
-                apply_householder_left(H, v, beta, p, 2, left_ncols);
-                // Right application:
+                apply_householder_left(H, v, beta, p, 2, nc_Hl);
                 const DefaultScalar b = static_cast<DefaultScalar>(beta);
-                const size_t nrows_right = q + 1;
-                Vector<DefaultScalar> w(nrows_right, DefaultScalar(0));
-                for (size_t i = 0; i < nrows_right; ++i)
-                    for (size_t jj = 0; jj < 2; ++jj) w[i] += H(i, p + jj) * v[jj];
-                for (size_t i = 0; i < nrows_right; ++i)
-                    for (size_t jj = 0; jj < 2; ++jj) H(i, p + jj) -= b * w[i] * conj(v[jj]);
-                
-                if (accQ) apply_householder_right(Q_iter, v, beta, p, 2);
+                const DefaultScalar v0 = v[0], v1 = v[1];
+                const DefaultScalar cv0 = conj(v0), cv1 = conj(v1);
+                LINALG_VECTORIZE
+                for (size_t i = 0; i < n; ++i) wHp[i] = H(i, p) * v0 + H(i, p + 1) * v1;
+                LINALG_VECTORIZE
+                for (size_t i = 0; i < n; ++i) {
+                    H(i, p) -= b * wHp[i] * cv0;
+                    H(i, p + 1) -= b * wHp[i] * cv1;
+                };
+                if (accQ) {
+                    LINALG_VECTORIZE
+                    for (size_t i = 0; i < n; ++i) wQp[i] = Q_iter(i, p) * v0 + Q_iter(i, p + 1) * v1;
+                    LINALG_VECTORIZE
+                    for (size_t i = 0; i < n; ++i) {
+                        Q_iter(i, p) -= b * wQp[i] * cv0;
+                        Q_iter(i, p + 1) -= b * wQp[i] * cv1;
+                    };
+                };
             };
-            
+        
+            // Bulge-chase loop:
             for (size_t k = p; k + 2 <= q; ++k) {
-                DefaultScalar x0 = H(k + 1, k);
-                DefaultScalar x1 = H(k + 2, k);
+                DefaultScalar x0 = H(k+1, k), x1 = H(k+2, k);
                 Vector<DefaultScalar> x2(2); x2[0] = x0; x2[1] = x1;
                 auto [v, beta] = householder_reflector(x2);
-                
-                if (beta == 0.0) { H(k + 2, k) = DefaultScalar(0); continue; };
-        
-                // Left-apply to H[k+1:k+3, k:n] (row start k+1, col start k).
+                if (beta == 0.0) { H(k+2, k) = DefaultScalar(0); continue; };
                 const DefaultScalar b = static_cast<DefaultScalar>(beta);
-                const size_t ncols_left = n - k;
-                Vector<DefaultScalar> wl(ncols_left, DefaultScalar(0));
-                for (size_t j = 0; j < ncols_left; ++j) wl[j] = conj(v[0]) * H(k+1, k+j) + conj(v[1]) * H(k+2, k+j);
-                for (size_t j = 0; j < ncols_left; ++j) {
-                    H(k+1, k+j) -= b * v[0] * wl[j];
-                    H(k+2, k+j) -= b * v[1] * wl[j];
+                const DefaultScalar v0 = v[0], v1 = v[1];
+                const DefaultScalar cv0 = conj(v0), cv1 = conj(v1);
+                const size_t nc = n - k;
+                // Left-apply to H[k+1:k+3, k:n]: layout-neutral via H(i,j) access.
+                LINALG_VECTORIZE
+                for (size_t j = 0; j < nc; ++j)
+                    wHp[j] = conj(v0)*H(k+1,k+j) + conj(v1)*H(k+2,k+j);
+                LINALG_VECTORIZE
+                for (size_t j = 0; j < nc; ++j) {
+                    H(k + 1,k + j) -= b * v0 * wHp[j];
+                    H(k + 2,k + j) -= b * v1 * wHp[j];
                 };
-
-                H(k + 2, k) = DefaultScalar(0); // Enforce zero.
-                // Right-apply to H[0:q+1, k+1:k+3] (rows 0...q):
-                    //const DefaultScalar b = static_cast<DefaultScalar>(beta);
-                    const size_t nrows_right = q + 1;
-                    Vector<DefaultScalar> w(nrows_right, DefaultScalar(0));
-                    for (size_t i = 0; i < nrows_right; ++i)
-                        for (size_t jj = 0; jj < 2; ++jj) w[i] += H(i, k + 1 + jj) * v[jj];
-                    for (size_t i = 0; i < nrows_right; ++i)
-                        for (size_t jj = 0; jj < 2; ++jj) H(i, k + 1 + jj) -= b * w[i] * conj(v[jj]);
-                if (accQ) apply_householder_right(Q_iter, v, beta, k + 1, 2);
+                H(k + 2, k) = DefaultScalar(0);
+                // Right-apply to H[0:q+1, k+1:k+3].
+                LINALG_VECTORIZE
+                for (size_t i = 0; i < nr_H; ++i) wHp[i] = H(i, k + 1) * v0 + H(i, k + 2) * v1;
+                LINALG_VECTORIZE
+                for (size_t i = 0; i < nr_H; ++i) {
+                    H(i, k + 1) -= b * wHp[i] * cv0;
+                    H(i, k + 2) -= b * wHp[i] * cv1;
+                };
+                // Right-apply to Q_iter[0:n, k+1:k+3].
+                if (accQ) {
+                    LINALG_VECTORIZE
+                    for (size_t i = 0; i < n; ++i) wQp[i] = Q_iter(i, k + 1) * v0 + Q_iter(i, k + 2) * v1;
+                    LINALG_VECTORIZE
+                    for (size_t i = 0; i < n; ++i) {
+                        Q_iter(i, k + 1) -= b * wQp[i] * cv0;
+                        Q_iter(i, k + 2) -= b * wQp[i] * cv1;
+                    };
+                };
             };
         };
 
         template<Layout L>
         bool qr_iteration(Matrix<DefaultScalar, L>& H, Matrix<DefaultScalar, L>& Q_iter, size_t ilo, size_t ihi) {
             if (ihi <= ilo) return true;
+            const size_t n = H.rows();
+            const bool accQ = (Q_iter.rows() == n);
             const double eps = std::numeric_limits<double>::epsilon();
             // Thread-local RNG for exceptional shifts.
             std::mt19937_64 rng(0x9e3779b97f4a7c15ULL);
             std::uniform_real_distribution<double> udist(-1.0, 1.0);
             size_t q = ihi; // Top of active window deflates one step at a time.
             int since_deflation = 0; // Steps since last deflation (for exceptional shifts).
+
             while (q > ilo) {
                 // Find the largest p such that H[p:q+1, p:q+1] is unreduced (no small subdiagonals).
                 size_t p = q;
@@ -348,7 +342,6 @@ namespace linalg {
                     };
                     --p;
                 };
-
                 if (p == q) { --q; since_deflation = 0; continue; };
 
                 DefaultScalar mu;
@@ -359,21 +352,15 @@ namespace linalg {
                 } else {
                     mu = wilkinson_shift(H(q - 1, q - 1), H(q - 1, q), H(q, q - 1), H(q, q));
                 };
-                // Apply one Francis step to H[p:q+1, p:q+1] window.
-                francis_step(H, Q_iter, p, q, mu);
+
+                francis_step(H, Q_iter, p, q, mu); 
                 ++since_deflation;
-        
-                // Check for new deflation at bottom of active window
-                const double tol = eps * (std::abs(H(q - 1, q - 1)) + std::abs(H(q, q)));
-                if (std::abs(H(q, q - 1)) <= tol) {
-                    H(q, q - 1) = DefaultScalar(0);
-                    --q;
-                    since_deflation = 0;
+                // Post-step deflation check:
+                const double tol = eps * (std::abs(H(q-1,q-1)) + std::abs(H(q,q)));
+                if (std::abs(H(q,q-1)) <= tol) {
+                    H(q,q-1) = DefaultScalar(0); --q; since_deflation = 0;
                 };
-                
-                // Iteration limit guard (per eigenvalue, not per step)
-                if (since_deflation > static_cast<int>(q - ilo + 1) * MAX_ITER_PER_EIG)
-                    return false;  // failed to converge
+                if (since_deflation > static_cast<int>(q - ilo + 1) * MAX_ITER_PER_EIG) return false;
             };
             return true;
         };
@@ -381,9 +368,9 @@ namespace linalg {
 
     /// @brief General Schur decomposition.
     /// @param A Input matrix (complex-valued).
-    /// @param compute_vectors
-    /// @param balance Balancing flag.
-    /// @return `SchurResult` structure.
+    /// @param compute_vectors `Q` matrix accumulation flag.
+    /// @param balance Eigenvalue balancing flag.
+    /// @return Corresponding `SchurResult` structure.
     template<Layout L = Layout::RowMajor>
     SchurResult<L> schur(const Matrix<DefaultScalar, L>& A, bool compute_vectors = true, bool balance = true) {
         const size_t n = A.rows();
@@ -405,7 +392,7 @@ namespace linalg {
         };
 
         Matrix<DefaultScalar, L> Q_hess(0, 0);
-        auto [vs, betas] = detail::hessenberg_reduce<DefaultScalar, L>(H, ilo, ihi, compute_vectors, Q_hess);
+        detail::hessenberg_reduce(H, ilo, ihi, compute_vectors, Q_hess);
     
         Matrix<DefaultScalar, L> Q_iter(0, 0);
         if (compute_vectors) Q_iter = Matrix<DefaultScalar, L>::identity(n);
@@ -452,6 +439,9 @@ namespace linalg {
         };
     };
 
+    /// @brief Compute the eigenvalues of a given matrix.
+    /// @param A Input square matrix.
+    /// @return Non-ordered vector, consisting of eigenvalues, each repeated according to its multiplicity.
     template<Layout L = Layout::RowMajor, typename E>
     Vector<std::complex<double>> eigenvalues(const MatExpr<E>& A) {
         return schur<L>(A, /*compute_vectors=*/false, /*balance=*/true).eigvals;
