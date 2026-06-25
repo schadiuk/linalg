@@ -96,8 +96,8 @@ int main() {
 - `Vector<T>` - a contiguous, 64-byte aligned, heap allocated vector type. Participates in expression templates via `VecExpr<Vector<T>>`.
 ```cpp
 // Construction.
-Vector<double> v(10); // Unitialised, size 10.
-Vector<double> v(10, 1.0); // Size 10 vector,filled with ones.
+Vector<double> v(10); // Uninitialised, size 10.
+Vector<double> v(10, 1.0); // Size 10 vector, filled with ones.
 Vector<double> v = {3.0, 2.0, 1.0}; // Initialised via list.
 
 // Static factories.
@@ -208,13 +208,15 @@ auto v = flatten(expr(A));
 Matrix<T> U = triu(A); // Upper triangle.
 Matrix<T> L = tril(A, -1); // Strict lower triangle.
 ```
+
+*Note:* somewhat more specific matrix constructors (Hilbert, Pascal, Vandermonde etc.) are available in a [separate file](/include/linalg/operations/constructors.hpp).
 ### Norms
 There are present matrix and vector norms, unified by common dispatch convention via `norm` function. List of them, indexed by `kind` argument, could be found in the table below.
 | Norm kind | Vector norm | Matrix norm | Notes |
 | --- | --- | --- | --- |
 | `0` | Number of non-zero entries. | None | L0 pseudo-norm. |
 | `1` | Absolute value sum. | Maximum absolute column sum. | L1 norm. |
-| `2` | Square root of the sum of all elements' squares. | None (yet?) | L2 norm (alternatively, `fro` for vectors). |
+| `2` | Square root of the sum of all elements' squares. | Largest singular value (computed via power iteration). | L2 norm (alternatively, `fro` for vectors). |
 | `fro` | Same as above. | Square root of the sum of all elements' squares. | Frobenius norm. |
 | `inf` | Maximum absolute entry. | Maximum absolute row sum. | Infinity norm. |
 | `-inf`* | Smallest absolute entry. | Minimum absolute row sum. | Negative infinity "norm". |
