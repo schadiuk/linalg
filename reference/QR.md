@@ -443,12 +443,12 @@ This is the standard LAPACK default. Round-off errors in the Householder transfo
 ```cpp
 template<typename T, Layout LL>
 struct QRResult {
-    Matrix<T, LL> P; // Column permutation matrix (A * P = Q * R).
-    Matrix<T, LL> Q; // Orthonormal factor (empty for R-only mode).
-    Matrix<T, LL> R; // Upper triangular factor.
+    Matrix<T, LL> P;    // Column permutation matrix (A * P = Q * R).
+    Matrix<T, LL> Q;    // Orthonormal factor (empty for R-only mode).
+    Matrix<T, LL> R;    // Upper triangular factor.
     Vector<size_t> piv; // Pivot vector (length n).
-    int rank; // Estimated numerical rank (-1 if non-pivoted).
-    bool pivoted; // Whether column pivoting was used.
+    int rank;           // Estimated numerical rank (-1 if non-pivoted).
+    bool pivoted;       // Whether column pivoting was used.
 };
 ```
 

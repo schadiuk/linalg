@@ -35,6 +35,7 @@ The library features rich documentation: Doxygen-like comment blocks (natively s
 - [Cholesky factorisation](/reference/CHOLESKY.md)
 - [LU decomposition](/reference/LU.md)
 - [QR decomposition](/reference/QR.md)
+- [Schur decomposition](/reference/SCHUR.md)
 
 *Note:* the format chosen is Markdown, supported by GitHub and a number of modern IDEs and editors (including [VS Code](https://code.visualstudio.com/docs/languages/markdown) - the one used in development). For easier understanding of the algorithms, it is recommended not to rely on GitHub website's rendering of formulas (some of which may be parsed incorrectly).
 
@@ -70,9 +71,12 @@ g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize m
 using namespace linalg; // All library classes and functions are enclosed in the namespace.
 
 int main() {
-    // Generate sample (trivial) matrix and RHS vector.
-    auto A = Matrix<double>::identity(3);
-    auto b = arange(1, 4); // [1.0, 2.0, 3.0]
+    Vector<double> b = arange(1, 4); // [1.0, 2.0, 3.0]
+    Matrix<double> A = toeplitz(b); // Generate structured matrix.
+
+    std::cout << A << std::endl; // Inspect the matrix.
+
+    std::cout << "Eigenvalues: " << eigenvalues(A) << "\n";
 
     // Expression templates.
     Vector<double> v = A * b;
@@ -269,11 +273,11 @@ The `lu()` function returns `P`, `L`, `U`, the packed representation, and the pi
 ```cpp
 auto res = lu(A); // LUResult<T, L> - dedicated structure.
  
-res.P // Permutation matrix.
-res.L // Unit lower triangular factor.
-res.U // Upper triangular factor.
-res.packed // In-place storage (strict-L below diagonal, U on/above).
-res.piv // Pivot indices.
+res.P       // Permutation matrix.
+res.L       // Unit lower triangular factor.
+res.U       // Upper triangular factor.
+res.packed  // In-place storage (strict-L below diagonal, U on/above).
+res.piv     // Pivot indices.
  
 // Connected functions:
 Vector<double> b;
@@ -308,14 +312,31 @@ auto res = qr_pivoted(A, tol); // With explicit rank tolerance set.
 // Fine-grained control, returns QRResult<T, L>.
 auto res = qr(A, QRMode::Reduced, /*pivoting=*/true, /*tol=*/-1.0);
  
-res.Q // Orthonormal factor (m * min(m,n) for Reduced).
-res.R // Upper triangular factor.
-res.P // Permutation matrix (for pivoted QR: A * P = Q * R).
-res.piv // Pivot indices (for pivoted QR).
-res.rank  // Estimated numerical rank (pivoted only; -1 otherwise).
+res.Q       // Orthonormal factor (m * min(m,n) for Reduced).
+res.R       // Upper triangular factor.
+res.P       // Permutation matrix (for pivoted QR: A * P = Q * R).
+res.piv     // Pivot indices (for pivoted QR).
+res.rank    // Estimated numerical rank (pivoted only; -1 otherwise).
 res.pivoted // true if pivoting was enabled.
 ```
 *Note:* an in-depth discussion of the algorithms is provided at the [dedicated reference](/reference/QR.md).
+
+---
+### Schur decomposition
+Performs Schur decomposition of a complex-valued matrix $A = Q T Q^H$, where the columns of unitary matrix $Q$ are the Schur vectors, and the diagonal of $T$ contains eigenvalues of the original matrix. A detailed discussion of the algorithm is provided [here](/reference/SCHUR.md).
+```cpp
+auto res = schur(A, /*compute_vectors=*/true, /*balance=*/true);
+
+res.T             // Upper-triangular factor.
+res.Q             // Unitary matrix of Schur vectors.
+res.eigvals       // Vector containing eigenvalues.
+res.balance_scale // Per-index scaling factors.
+res.balance.perm  // Permutation encoded for balancing.
+res.balanced      // Boolean flag.
+
+Vector<DefaultScalar> = eigenvalues(A); // Convenience function.
+```
+
 
 ---
 ## Benchmarking
