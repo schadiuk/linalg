@@ -13,6 +13,7 @@
 - [Francis step](#5-francis-implicit-single-shift-qr)
 - [Wilkinson shift strategy](#6-shift-strategy-and-deflation)
 - [Schur vector accumulation](#7-schur-vector-accumulation)
+- [Public API](#8-public-api)
 
 ---
 ## 0. Preamble and notation
@@ -98,8 +99,8 @@ where $P$ is a permutation matrix and $D = \mathrm{diag}(2^{s_0}, \ldots, 2^{s_{
     Let $\rho = c_i / r_i$. The algorithm brings $\rho$ into the canonical interval $[1/4, 4)$ by repeatedly multiplying or dividing by $4 = \mathrm{BASE}^2$, tracking the corresponding power $f$:
     A single additional step handles the two half-intervals: if $\rho < 1/\mathrm{BASE}$ then $f /= \mathrm{BASE}$; if $\rho > \mathrm{BASE}$ then $f *= \mathrm{BASE}$. If $f = 1$ (within $10^{-14}$) or $f = 0$, no scaling is applied. Otherwise the similarity is executed as
     
-    $$A(i, j) \leftarrow f \cdot A(i, j) \quad \forall\, j \qquad \text{(row $i$ scaled by $f$)}$$
-    $$A(j, i) \leftarrow A(j, i) / f \quad \forall\, j \qquad \text{(column $i$ scaled by $1/f$)}$$
+    $$A(i, j) \leftarrow f \cdot A(i, j) \quad \forall\, j$$
+    $$A(j, i) \leftarrow A(j, i) / f \quad \forall\, j$$
     
     and the log₂ exponent is accumulated: `scale[i] += log2(f)`.
     
@@ -206,7 +207,7 @@ Compute the length-2 Householder reflector $v_k$ for $x_k$, then apply it as a s
 $$\mathtt{wH}[j] = \overline{v_0}\, H(k+1, k+j) + \overline{v_1}\, H(k+2, k+j), \quad j = 0, \ldots, \mathtt{nc}-1$$
 $$H(k+1, k+j) \mathrel{-}= \beta\, v_0\, \mathtt{wH}[j], \quad H(k+2, k+j) \mathrel{-}= \beta\, v_1\, \mathtt{wH}[j].$$
 
-Set $H(k+2, k) \leftarrow 0$ unconditionally.
+- Set $H(k+2, k) \leftarrow 0$ unconditionally.
 
 - **Right-apply** to $H[0:\mathtt{nr\_H}, k+1:k+3]$ (where `nr_H = q + 1`), reusing `wH[0:nr_H]`:
 
@@ -216,6 +217,7 @@ $$H(i, k+1) \mathrel{-}= \beta\, \mathtt{wH}[i]\, \overline{v_0}, \quad H(i, k+2
 - **Right-apply to $Q_{\text{iter}}[0:n, k+1:k+3]$** (if `accQ`), using `wQ[0:n]`:
 
 $$\mathtt{wQ}[i] = Q(i, k+1)\, v_0 + Q(i, k+2)\, v_1$$
+
 $$Q(i, k+1) \mathrel{-}= \beta\, \mathtt{wQ}[i]\, \overline{v_0}, \quad Q(i, k+2) \mathrel{-}= \beta\, \mathtt{wQ}[i]\, \overline{v_1}.$$
 
 After all $q - p$ chase steps, the bulge has been eliminated and $H$ is again upper Hessenberg on $[p, q]$.
@@ -231,6 +233,7 @@ The Wilkinson shift is chosen as one of the two eigenvalues of the trailing $2 \
 $$M = \begin{bmatrix} H(q-1,q-1) & H(q-1,q) \\ H(q,q-1) & H(q,q) \end{bmatrix} = \begin{bmatrix} a & b \\ c & d \end{bmatrix}.$$
 
 The eigenvalues of $M$ satisfy
+
 $$\lambda_{1,2} = \frac{a + d}{2} \pm \sqrt{\!\left(\frac{a-d}{2}\right)^{\!2} + bc}. \tag{$*$}$$
  
 The **Wilkinson shift** is whichever root $\lambda_i$ satisfies $|\lambda_i - d| \le |\lambda_{3-i} - d|$, i.e. the eigenvalue of $M$ closest to the bottom-right entry $d$. This choice is optimal for the convergence of the last subdiagonal entry $H(q, q-1)$ to zero: after one step the new $|H'(q, q-1)| \approx |H(q,q-1)| \cdot |\lambda_{\text{far}} - \mu| / |\lambda_{\text{near}} - \mu|$, which is small when $\mu \approx d$ and $|d - \lambda_{\text{near}}|$ is much smaller than $|d - \lambda_{\text{far}}|$.
@@ -244,7 +247,8 @@ Convergence stagnation occurs when the Wilkinson shift $\mu$ is close to an eige
 const double scale = std::abs(H(q,q)) + std::abs(H(q,q-1));
 mu = DefaultScalar(scale * udist(rng), scale * udist(rng));
 ```
-The shift is a random complex number whose real and imaginary parts are drawn uniformly from $[-\mathtt{scale}, +\mathtt{scale}]$ where $\mathtt{scale} = |H(q,q)| + |H(q,q-1)|$ is a local spectral radius estimate. The random number generator is `mt19937_64` with the fixed seed set to ensure reproducible behaviour across runs.
+
+The shift is a random complex number whose real and imaginary parts are drawn uniformly from $[-\mathtt{scale}, +\mathtt{scale}]$ where $\mathtt{scale} = |H(q,q)| + |H(q,q-1)|$ is a local spectral radius estimate. The random number generator is `mt19937_64` with a fixed seed set to ensure reproducible behaviour across runs.
 
 ---
 ## 7. Schur vector accumulation
@@ -271,4 +275,33 @@ This costs $O(n^3)$ multiplies - the same order as the preceding stages. For lar
 - The final GEMM $Q_H \cdot Q_{\text{iter}}$ is skipped entirely.
 - The blocked WY right-apply in `hessenberg_reduce` (`hess_wy_q_update`) is also skipped (but the initialisation `Q_hess = identity(n)` does still execute, as `Q_hess` is always passed to `hessenberg_reduce`).
 
-In total, passing `compute_vectors=false` eliminates the dominant $O(n^2)$ work per Francis step and the $O(n^3)$ composition GEMM, approximately halving the total wall time for the eigenvalue-only path.
+---
+## 8. Public API
+
+### 8.1 `schur()`: the entry point
+```cpp
+template<Layout L = Layout::RowMajor>
+SchurResult<L> schur(const Matrix<DefaultScalar, L>& A,
+                bool compute_vectors = true,            // Formation of Schur vector matrix.
+                bool balance = true);                   // Eigenvalue balancing flag.
+```
+
+The function makes a copy of the input $A$ into a working matrix. Note that the master function accepts only general complex-valued matrices. Overloads upcast real types to `std::complex<double>` (a.k.a. `DefaultScalar`) before work:
+```cpp
+const size_t n = A.rows();
+Matrix<std::complex<double>, L> Ac(n, n);
+for (size_t i = 0; i < n; ++i)
+    for (size_t j = 0; j < n; ++j) Ac(i, j) = std::complex<double>(A(i, j), 0.0);
+```
+
+### 8.2 Eigenvalue computation
+
+There exists a dedicated utility function:
+```cpp
+template<Layout L = Layout::RowMajor, typename E>
+Vector<std::complex<double>> eigenvalues(const MatExpr<E>& A) {
+    return schur<L>(A, /*compute_vectors=*/false, /*balance=*/true).eigvals;
+};
+``` 
+
+As it is unnecessary to compute the unitary Schur factor, the call with `compute_vectors = false` eliminates the dominant $O(n^2)$ work per Francis step and the $O(n^3)$ composition GEMM, which makes it possible to find the $T$ matrix (and, consequently, the eigenvalues) in reasonable time.
