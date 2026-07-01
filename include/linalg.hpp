@@ -30,6 +30,7 @@
 #include <linalg/decompositions/schur.hpp>
 
 #include <linalg/solvers/lstsq.hpp>
+#include <linalg/solvers/eig.hpp>
 
 #include <string>
 #include <sstream>
@@ -40,7 +41,7 @@ namespace linalg {
     struct IOFormat {
         int precision = 3;
         bool scientific = false;
-        bool complex_as_pair = true; // False: a + bi, true: (a,b)
+        bool complex_as_pair = false; // False: a + bi, true: (a,b)
     };
 
     template<typename T>

@@ -3,9 +3,9 @@
 #include <linalg/blas/level3.hpp>
 
 namespace linalg {
-    // Result of trevc: right and/or left eigenvectors of `A = Q*T*Q^H`.
+    // Result of eig: right and/or left eigenvectors of `A = Q*T*Q^H`.
     template<typename T, Layout LL>
-    struct TrevcResult {
+    struct EigResult {
         Vector<T> eigenvalues;
         Matrix<T, LL> VR; // Right eigenvectors as columns.
         Matrix<T, LL> VL; // Left eigenvectors.
@@ -180,11 +180,11 @@ namespace linalg {
     /// @param Q_schur Complex unitary matrix of Schur vectors.
     /// @param right Compute right eigenvectors.
     /// @param left Compute left eigenvectors
-    /// @return Corresponding `TrevcResult` structure.
+    /// @return Corresponding `EigResult` structure.
     template<typename T, Layout LL>
-    TrevcResult<T, LL>
-    trevc(const Matrix<T, LL>& T_schur, const Matrix<T, LL>& Q_schur, bool right = true, bool left  = false) {
-        static_assert(detail::is_complex_v<T>, "trevc: T must be std::complex<float> or std::complex<double>. Use the unified Schur path");
+    EigResult<T, LL>
+    eig(const Matrix<T, LL>& T_schur, const Matrix<T, LL>& Q_schur, bool right = true, bool left  = false) {
+        static_assert(detail::is_complex_v<T>, "eig: T must be std::complex<float> or std::complex<double>. Use the unified Schur path");
         const size_t N = T_schur.rows();
         BOUNDS_CHECK(T_schur.cols() == N);
         if (right || left) BOUNDS_CHECK(Q_schur.rows() == N && Q_schur.cols() == N);
@@ -213,7 +213,7 @@ namespace linalg {
     
         const double smin = detail::smin(tp, N);
         const T* LINALG_RESTRICT qp = detail::assume_aligned<64>(Q_rm.data());
-        TrevcResult<T, LL> res;
+        EigResult<T, LL> res;
         res.eigenvalues = std::move(eigs);
 
         if (right) {
