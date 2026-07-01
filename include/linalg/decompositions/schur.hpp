@@ -291,7 +291,7 @@ namespace linalg {
                 // Left-apply to H[k+1:k+3, k:n]: layout-neutral via H(i,j) access.
                 LINALG_VECTORIZE
                 for (size_t j = 0; j < nc; ++j)
-                    wHp[j] = conj(v0)*H(k+1,k+j) + conj(v1)*H(k+2,k+j);
+                    wHp[j] = conj(v0) * H(k+1,k+j) + conj(v1) * H(k+2,k+j);
                 LINALG_VECTORIZE
                 for (size_t j = 0; j < nc; ++j) {
                     H(k + 1,k + j) -= b * v0 * wHp[j];
@@ -358,7 +358,7 @@ namespace linalg {
                 // Post-step deflation check:
                 const double tol = eps * (std::abs(H(q-1,q-1)) + std::abs(H(q,q)));
                 if (std::abs(H(q,q-1)) <= tol) {
-                    H(q,q-1) = DefaultScalar(0); --q; since_deflation = 0;
+                    H(q, q-1) = DefaultScalar(0); --q; since_deflation = 0;
                 };
                 if (since_deflation > static_cast<int>(q - ilo + 1) * MAX_ITER_PER_EIG) return false;
             };
