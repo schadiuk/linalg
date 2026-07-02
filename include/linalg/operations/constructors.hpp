@@ -1,4 +1,4 @@
-# pragma once
+#pragma once
 
 #include <linalg/operations/matrix_ops.hpp>
 

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <linalg/storage/matrix.hpp>
+#include <linalg/storage/matrix_view.hpp>
+#include <linalg/core/hints.hpp>
+#include <linalg/core/error.hpp>
 #include <linalg/expressions/expr_base.hpp>
 
 namespace linalg {

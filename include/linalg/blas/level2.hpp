@@ -1,5 +1,6 @@
-# pragma once
+#pragma once
 
+#include <linalg/expressions/matrix_expr.hpp>
 #include <linalg/blas/level1.hpp>
 #include <optional>
 

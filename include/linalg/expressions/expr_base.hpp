@@ -1,5 +1,8 @@
 #pragma once
 
+#include <linalg/core/common.hpp>
+#include <linalg/core/hints.hpp>
+
 namespace linalg {
 	template<typename T, Layout L> requires Scalar<T> class Matrix;
 	template<typename T, Layout L, bool Trans, bool Conj, bool Mutable> class MatrixView;

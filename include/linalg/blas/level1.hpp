@@ -2,6 +2,7 @@
 
 #include <linalg/storage/matrix.hpp>
 #include <linalg/storage/vector.hpp>
+#include <linalg/expressions/vector_expr.hpp>
 
 namespace linalg {
 	namespace detail {

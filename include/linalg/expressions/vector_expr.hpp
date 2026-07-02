@@ -1,5 +1,9 @@
 #pragma once
 
+#include <linalg/storage/vector.hpp>
+#include <linalg/storage/vector_view.hpp>
+#include <linalg/core/hints.hpp>
+#include <linalg/core/error.hpp>
 #include <linalg/expressions/expr_base.hpp>
 
 namespace linalg {
