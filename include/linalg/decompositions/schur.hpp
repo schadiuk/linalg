@@ -196,8 +196,7 @@ namespace linalg {
                 const size_t len = ihi + 1 - (k_abs + 1);
                 if (len < 1) return;
                 // Reflector from subdiagonal of column k_abs.
-                Vector<DefaultScalar> x(len);
-                for (size_t i = 0; i < len; ++i) x[i] = A(k_abs + 1 + i, k_abs);
+                Vector<DefaultScalar> x = A.col(k_abs, k_abs + 1, len);
                 auto [v, beta] = householder_reflector(x);
                 vs[kidx] = v;
                 betas[kidx] = beta;
