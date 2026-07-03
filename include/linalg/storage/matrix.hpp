@@ -4,6 +4,7 @@
 #include <linalg/core/error.hpp>
 #include <linalg/core/parallel.hpp>
 #include <linalg/core/hints.hpp>
+#include <linalg/storage/vector.hpp>
 
 namespace linalg {
     // Forward declaration of expression template class
@@ -14,27 +15,49 @@ namespace linalg {
     /// @tparam L Layout.
     template<typename T = DefaultScalar, Layout L = Layout::RowMajor> requires Scalar<T>
     class Matrix : public MatExpr<Matrix<T, L>> {
+    private:
+        /// @brief Builds an `n`-slot flat buffer whose `k`-th slot is placement-constructed from `init_fn(k)`, in a single parallel write pass over freshly allocated memory.
+        template<typename F>
+        static std::vector<T, UninitAlignedAllocator<T>> fill_construct_flat(size_t n, F&& init_fn) {
+            std::vector<T, UninitAlignedAllocator<T>> buf(n);
+            T* LINALG_RESTRICT p = buf.data();
+            parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [p, &init_fn](size_t s, size_t e) {
+                for (size_t i = s; i < e; ++i) ::new (static_cast<void*>(p + i)) T(init_fn(i));
+            });
+            return buf;
+        };
+
+        template<typename F>
+        static std::vector<T, UninitAlignedAllocator<T>> fill_construct(size_t rows, size_t cols, F&& elem_fn) {
+            std::vector<T, UninitAlignedAllocator<T>> buf(rows * cols);
+            T* LINALG_RESTRICT p = buf.data();
+            const size_t stride = (L == Layout::RowMajor) ? cols : rows;
+            if constexpr (L == Layout::RowMajor) {
+                const size_t threshold = std::max<size_t>(1, PARALLEL_THRESHOLD_SIMPLE / (cols + 1));
+                parallel_for(rows, threshold, [p, stride, cols, &elem_fn](size_t rs, size_t re) {
+                    for (size_t i = rs; i < re; ++i)
+                        for (size_t j = 0; j < cols; ++j) ::new (static_cast<void*>(p + i * stride + j)) T(elem_fn(i, j));
+                });
+            } else {
+                const size_t threshold = std::max<size_t>(1, PARALLEL_THRESHOLD_SIMPLE / (rows + 1));
+                parallel_for(cols, threshold, [p, stride, rows, &elem_fn](size_t cs, size_t ce) {
+                    for (size_t j = cs; j < ce; ++j)
+                        for (size_t i = 0; i < rows; ++i) ::new (static_cast<void*>(p + j * stride + i)) T(elem_fn(i, j));
+                });
+            };
+            return buf;
+        };
     public:
         /// @brief Empty matrix constructor. 
         /// @param m Row count.
         /// @param n Column count.
-        /// @note Delegates to constructor of `std::vector` of m * n size.
-        Matrix(size_t m = 0, size_t n = 0) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_(m * n) {};
+        Matrix(size_t m = 0, size_t n = 0) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_(fill_construct_flat(m * n, [](size_t) { return T(); })) {};
 
         /// @brief Uniform constructor that fills matrix with a given value.
         /// @param m Row count.
         /// @param n Column count. 
         /// @param val The fill-in value.
-        Matrix(size_t m, size_t n, const T& val) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_() {
-            size_t total = m * n;
-            data_.resize(total);
-            parallel_for(total, PARALLEL_THRESHOLD_SIMPLE,
-                [this, val](size_t start, size_t end) {
-                    for (size_t i = start; i < end; ++i) {
-                        data_[i] = val;
-                    };
-                });
-        };
+        Matrix(size_t m, size_t n, const T& val) : rows_(m), cols_(n), stride_(L == Layout::RowMajor ? n : m), data_(fill_construct_flat(m * n, [&val](size_t) { return val; })) {};
 
         /// @brief Constructor from a given `MatExpr`.
         /// @tparam E CRTP-required parameter clause of `MatExpr`.
@@ -42,9 +65,7 @@ namespace linalg {
         /// @param val Placeholder value.
         template<typename E>
         Matrix(const MatExpr<E>& expr, const T& val = T(0)) : rows_(expr.rows()), cols_(expr.cols()), stride_(L == Layout::RowMajor ? expr.cols() : expr.rows()),
-            data_(expr.cols() * expr.rows(), val) {
-            *this = expr;
-        };
+            data_(fill_construct(expr.rows(), expr.cols(), [&e = expr.self()](size_t i, size_t j) { return static_cast<T>(e(i, j)); })) {};;
 
         /// @brief Constructor from a given `MatrixView`.
         /// @tparam Trans Transposition flag required by the view.
@@ -53,9 +74,7 @@ namespace linalg {
         /// @param view The view.
         template<bool Trans, bool Conj, bool Mutable>
         Matrix(const MatrixView<T, L, Trans, Conj, Mutable>& view) : rows_(view.rows()), cols_(view.cols()), stride_(L == Layout::RowMajor ? view.cols() : view.rows()),
-            data_(view.rows() * view.cols()) {
-            *this = expr(view);
-        };
+            data_(fill_construct(view.rows(), view.cols(), [&view](size_t i, size_t j) { return static_cast<T>(view(i, j)); })) {};
 
         /// @brief Constructor from a 2D `std::array` object.
         /// @tparam rows Row count deduced from the array.
@@ -63,35 +82,39 @@ namespace linalg {
         /// @param arr The array.
         template<size_t rows, size_t cols>
         Matrix(const std::array<std::array<T, cols>, rows>& arr) : rows_(rows), cols_(cols), stride_(L == Layout::RowMajor ? cols : rows), data_(rows* cols) {
-            const size_t total = rows * cols;
-            if (total == 0) return;
-            if constexpr (total < PARALLEL_THRESHOLD_SIMPLE) {
-                for (size_t i = 0; i < rows; ++i) {
-                    for (size_t j = 0; j < cols; ++j) {
-                        (*this)(i, j) = arr[i][j];
-                    };
-                };
-            }
-            else if constexpr (L == Layout::RowMajor) {
-                parallel_for(rows, 1,
-                    [this, &arr](size_t start_row, size_t end_row) {
-                        for (size_t i = start_row; i < end_row; ++i) {
-                            const auto& src_row = arr[i];
-                            for (size_t j = 0; j < cols; ++j) {
-                                (*this)(i, j) = src_row[j];
-                            };
-                        };
-                    });
-            }
+             constexpr size_t total = rows * cols;
+            if constexpr (total == 0) return;
             else {
-                parallel_for(cols, 1,
-                    [this, &arr](size_t start_col, size_t end_col) {
-                        for (size_t j = start_col; j < end_col; ++j) {
-                            for (size_t i = 0; i < rows; ++i) {
-                                (*this)(i, j) = arr[i][j];
-                            };
+                T* LINALG_RESTRICT p = data_.data();
+                const size_t stride = stride_;
+                if constexpr (total < PARALLEL_THRESHOLD_SIMPLE) {
+                    for (size_t i = 0; i < rows; ++i) {
+                        for (size_t j = 0; j < cols; ++j) {
+                            ::new (static_cast<void*>(p + (L == Layout::RowMajor ? i * stride + j : j * stride + i))) T(arr[i][j]);
                         };
-                    });
+                    };
+                }
+                else if constexpr (L == Layout::RowMajor) {
+                    parallel_for(rows, 1,
+                        [p, stride, &arr](size_t start_row, size_t end_row) {
+                            for (size_t i = start_row; i < end_row; ++i) {
+                                const auto& src_row = arr[i];
+                                for (size_t j = 0; j < cols; ++j) {
+                                    ::new (static_cast<void*>(p + i * stride + j)) T(src_row[j]);
+                                };
+                            };
+                        });
+                }
+                else {
+                    parallel_for(cols, 1,
+                        [p, stride, &arr](size_t start_col, size_t end_col) {
+                            for (size_t j = start_col; j < end_col; ++j) {
+                                for (size_t i = 0; i < rows; ++i) {
+                                    ::new (static_cast<void*>(p + j * stride + i)) T(arr[i][j]);
+                                };
+                            };
+                        });
+                };
             };
         };
 
@@ -100,37 +123,39 @@ namespace linalg {
         /// @tparam cols Column count obtained likewise.
         /// @param arr The array. 
         template<size_t rows, size_t cols>
-        Matrix(const T(&arr)[rows][cols]) : rows_(rows), cols_(cols),
-            stride_(L == Layout::RowMajor ? cols : rows), data_(rows* cols) {
-            const size_t total = rows * cols;
-            if (total == 0) return;
-
-            if constexpr (total < PARALLEL_THRESHOLD_SIMPLE) {
-                for (size_t i = 0; i < rows; ++i) {
-                    for (size_t j = 0; j < cols; ++j) {
-                        (*this)(i, j) = arr[i][j];
-                    };
-                };
-            }
-            else if constexpr (L == Layout::RowMajor) {
-                parallel_for(rows, 1,
-                    [this, &arr](size_t start_row, size_t end_row) {
-                        for (size_t i = start_row; i < end_row; ++i) {
-                            for (size_t j = 0; j < cols; ++j) {
-                                (*this)(i, j) = arr[i][j];
-                            };
-                        };
-                    });
-            }
+        Matrix(const T(&arr)[rows][cols]) : rows_(rows), cols_(cols), stride_(L == Layout::RowMajor ? cols : rows), data_(rows* cols) {
+             constexpr size_t total = rows * cols;
+            if constexpr (total == 0) return;
             else {
-                parallel_for(cols, 1,
-                    [this, &arr](size_t start_col, size_t end_col) {
-                        for (size_t j = start_col; j < end_col; ++j) {
-                            for (size_t i = 0; i < rows; ++i) {
-                                (*this)(i, j) = arr[i][j];
-                            };
+                T* LINALG_RESTRICT p = data_.data();
+                const size_t stride = stride_;
+                if constexpr (total < PARALLEL_THRESHOLD_SIMPLE) {
+                    for (size_t i = 0; i < rows; ++i) {
+                        for (size_t j = 0; j < cols; ++j) {
+                            ::new (static_cast<void*>(p + (L == Layout::RowMajor ? i * stride + j : j * stride + i))) T(arr[i][j]);
                         };
-                    });
+                    };
+                }
+                else if constexpr (L == Layout::RowMajor) {
+                    parallel_for(rows, 1,
+                        [p, stride, &arr](size_t start_row, size_t end_row) {
+                            for (size_t i = start_row; i < end_row; ++i) {
+                                for (size_t j = 0; j < cols; ++j) {
+                                    ::new (static_cast<void*>(p + i * stride + j)) T(arr[i][j]);
+                                };
+                            };
+                        });
+                }
+                else {
+                    parallel_for(cols, 1,
+                        [p, stride, &arr](size_t start_col, size_t end_col) {
+                            for (size_t j = start_col; j < end_col; ++j) {
+                                for (size_t i = 0; i < rows; ++i) {
+                                    ::new (static_cast<void*>(p + j * stride + i)) T(arr[i][j]);
+                                };
+                            };
+                        });
+                };
             };
         };
 
@@ -191,14 +216,7 @@ namespace linalg {
 
             if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
                 if (depends) {
-                    std::vector<T, AlignedAllocator<T>> temp(total);
-                    size_t idx = 0;
-                    for (size_t i = 0; i < this->rows_; ++i) {
-                        for (size_t j = 0; j < this->cols_; ++j) {
-                            temp[idx++] = e(i, j);
-                        };
-                    };
-                    data_ = std::move(temp);
+                    data_ = fill_construct(this->rows_, this->cols_, [&e](size_t i, size_t j) { return static_cast<T>(e(i, j)); });
                 }
                 else {
                     for (size_t i = 0; i < this->rows_; ++i) {
@@ -294,7 +312,6 @@ namespace linalg {
             return data_[idx];
         };
 
-        // Unchecked element indexation
         LINALG_INLINE
         /// @brief Unchecked element indexation.
         /// @param i Row index.
@@ -337,20 +354,67 @@ namespace linalg {
         /// @param n Column count.
         /// @return The matrix.
         static Matrix random(size_t m, size_t n) {
-            Matrix mat(m, n);
-            size_t total = m * n;
-            parallel_for(total, PARALLEL_THRESHOLD_SIMPLE,
-                [&mat](size_t start, size_t end) {
-                    for (size_t i = start; i < end; ++i) {
-                        mat.data_[i] = randomScalar<T>();
-                    };
-                });
+            Matrix mat;
+            mat.data_ = fill_construct_flat(m * n, [](size_t) { return randomScalar<T>(); });
+            mat.rows_ = m; mat.cols_ = n; mat.stride_ = (L == Layout::RowMajor) ? n : m;
             return mat;
         };
 
+        /// @brief Sub-row extraction.
+        /// @param i Row index.
+        /// @param j0 Starting column index.
+        /// @param count Number of elements to extract.
+        /// @return Sub-row: row `i`, columns `[j0, j0 + count)` as an independent `Vector`.
+        Vector<T> row(size_t i, size_t j0, size_t count) const {
+            BOUNDS_CHECK(i < rows_ && j0 <= cols_ && count <= cols_ - j0);
+            Vector<T> r(count);
+            T* LINALG_RESTRICT dst = r.data();
+            if constexpr (L == Layout::RowMajor) {
+                const T* LINALG_RESTRICT src = data_.data() + i * stride_ + j0;
+                std::copy(src, src + count, dst);
+            } else {
+                const size_t threshold = std::max<size_t>(1, PARALLEL_THRESHOLD_SIMPLE / (rows_ + 1));
+                parallel_for(count, threshold, [this, i, j0, dst](size_t s, size_t e) {
+                    for (size_t k = s; k < e; ++k) dst[k] = (*this)(i, j0 + k);
+                });
+            };
+            return r;
+        };
+
+        /// @brief Full row extraction.
+        /// @param i Row index.
+        /// @return The extracted row.
+        Vector<T> row(size_t i) const { return row(i, 0, cols_); };
+
+        /// @brief Sub-column extraction.
+        /// @param j Rolumn index.
+        /// @param i0 Row offset.
+        /// @param count Number of elements to extract.
+        /// @return Sub-column: column `j`, rows `[i0, i0 + count)`, as a new, independent `Vector`.
+        Vector<T> col(size_t j, size_t i0, size_t count) const {
+            BOUNDS_CHECK(j < cols_ && i0 <= rows_ && count <= rows_ - i0);
+            Vector<T> c(count);
+            T* LINALG_RESTRICT dst = c.data();
+            if constexpr (L == Layout::ColMajor) {
+                const T* LINALG_RESTRICT src = data_.data() + j * stride_ + i0;
+                std::copy(src, src + count, dst);
+            } else {
+                const size_t threshold = std::max<size_t>(1, PARALLEL_THRESHOLD_SIMPLE / (cols_ + 1));
+                parallel_for(count, threshold, [this, j, i0, dst](size_t s, size_t e) {
+                    for (size_t k = s; k < e; ++k) dst[k] = (*this)(i0 + k, j);
+                });
+            };
+            return c;
+        };
+
+        /// @brief Full column extraction.
+        /// @param j Column index.
+        /// @return The extracted column.
+        Vector<T> col(size_t j) const { return col(j, 0, rows_); };
+
     private:
         // Data storage and dimensions
-        std::vector<T, AlignedAllocator<T>> data_;
+        std::vector<T, UninitAlignedAllocator<T>> data_;
         size_t rows_, cols_, stride_;
 
         template<typename U, Layout LL, bool Trans, bool Conj, bool Mutable> friend class MatrixView;
