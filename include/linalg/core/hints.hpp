@@ -112,6 +112,16 @@ namespace linalg {
         /// @tparam T Scalar type.
         template<typename T>
         inline constexpr std::size_t unroll_factor = std::max<std::size_t>(4u, 2u * simd_lanes<T>);
+
+        // Elementwise expression classifiers:
+        template<typename E, typename V = void>
+        struct expr_is_elementwise : std::false_type {};
+
+        template<typename E>
+        struct expr_is_elementwise<E, std::void_t<decltype(E::is_elementwise)>> : std::bool_constant<E::is_elementwise> {};
+
+        template<typename E>
+        inline constexpr bool expr_is_elementwise_v = expr_is_elementwise<E>::value;
     };
 
     /// @brief Replacement for std::allocator<T>. Every allocation starts on an Align-byte boundary. Default 64 B is one cache line, equivalent to widest AVX-512 store.

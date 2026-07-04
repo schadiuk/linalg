@@ -6,8 +6,10 @@
 #include <linalg/core/hints.hpp>
 
 namespace linalg {
-	// Forward declaration of expression template class
+	// Forward declarations
 	template<typename U> struct VecExpr;
+	template<typename EM, typename EV> struct GemvExpr;
+	template<typename EV, typename EM> struct VgemExpr;
 
 	/// @brief Main vector storage class.
 	/// @tparam T scalar element type. Supports: float, double, and their std::complex counterparts.
@@ -34,6 +36,9 @@ namespace linalg {
 		/// @param init The list.
 		Vector(std::initializer_list<T> init) : data_(init), size_(init.size()) {};
 
+		/// @brief Uniform fill-in constructor.
+		/// @param n Size.
+		/// @param val Fill value.
 		Vector(size_t n, const T& val) : data_(fill_construct(n, [&val](size_t) { return val; })), size_(n) {};
 
 		/// @brief Constructor from a given `VecExpr`.
@@ -65,7 +70,9 @@ namespace linalg {
 			BOUNDS_CHECK(size_ == e.size());
 			const void* data_ptr = data_.data();
 			const size_t data_bytes = size_ * sizeof(T);
-			bool depends = e.depends_on(data_ptr, data_bytes);
+
+			constexpr bool elementwise = detail::expr_is_elementwise_v<E>;
+			bool depends = !elementwise && e.depends_on(data_ptr, data_bytes);
 			const size_t total = size_;
  
 			if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
@@ -176,6 +183,18 @@ namespace linalg {
 			vec.size_ = n;
 			return vec;
 		};
+
+		template<typename EM, typename EV>
+		Vector(const GemvExpr<EM, EV>& expr);
+
+		template<typename EM, typename EV>
+		Vector<T>& operator=(const GemvExpr<EM, EV>& expr);
+ 
+		template<typename EV, typename EM>
+		Vector(const VgemExpr<EV, EM>& expr);
+
+		template<typename EV, typename EM>
+		Vector<T>& operator=(const VgemExpr<EV, EM>& expr);
 
 	private:
 	    // Data storage and dimension

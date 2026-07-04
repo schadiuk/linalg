@@ -7,8 +7,9 @@
 #include <linalg/storage/vector.hpp>
 
 namespace linalg {
-    // Forward declaration of expression template class
+    // Forward declarations
     template<typename U> struct MatExpr;
+    template<typename E1, typename E2> struct GemmExpr;
 
     /// @brief Main matrix storage class.
     /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
@@ -211,7 +212,9 @@ namespace linalg {
             BOUNDS_CHECK(this->rows_ == e.rows() && this->cols_ == e.cols());
             const void* data_ptr = data_.data();
             const size_t data_bytes = data_.size() * sizeof(T);
-            bool depends = e.depends_on(data_ptr, data_bytes);
+
+            constexpr bool elementwise = detail::expr_is_elementwise_v<E>;
+            bool depends = !elementwise && e.depends_on(data_ptr, data_bytes);
             const size_t total = this->rows_ * this->cols_;
 
             if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
@@ -411,6 +414,12 @@ namespace linalg {
         /// @param j Column index.
         /// @return The extracted column.
         Vector<T> col(size_t j) const { return col(j, 0, rows_); };
+
+        template<typename E1, typename E2>
+        Matrix(const GemmExpr<E1, E2>& expr);
+        
+        template<typename E1, typename E2>
+        Matrix<T, L>& operator=(const GemmExpr<E1, E2>& expr);
 
     private:
         // Data storage and dimensions

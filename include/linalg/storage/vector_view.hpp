@@ -11,11 +11,11 @@ namespace linalg {
         using Ptr = std::conditional_t<Mutable, T*, const T*>;
     public:
         /// @brief Read-only constructor from a const Vector.
-		/// @param vet The vector.
+		/// @param vec The vector.
         explicit VectorView(const Vector<T>& vec) requires (!Mutable) : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
         /// @brief Constructor from a non-const Vector.
-		/// @param vet The vector.
+		/// @param vec The vector.
         explicit VectorView(Vector<T>& vec) requires Mutable : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
         /// @brief Raw-pointer constructor.
@@ -71,10 +71,13 @@ namespace linalg {
         VectorView& operator=(const VecExpr<E>& expr) requires Mutable {
             const auto& e = expr.self();
             BOUNDS_CHECK(size_ == e.size());
-            const bool depends = e.depends_on(static_cast<const void*>(data_), memory_span());
+
+            constexpr bool elementwise = detail::expr_is_elementwise_v<E>;
+            const bool depends = !elementwise && e.depends_on(static_cast<const void*>(data_), memory_span());
             if (depends) {
-                std::vector<T> temp(size_);
-                for (size_t i = 0; i < size_; ++i) temp[i] = e(i);
+                std::vector<T, UninitAlignedAllocator<T>> temp(size_);
+                T* LINALG_RESTRICT tp = temp.data();
+                for (size_t i = 0; i < size_; ++i) ::new (static_cast<void*>(tp + i)) T(e(i));
                 for (size_t i = 0; i < size_; ++i) (*this)(i) = temp[i];
             } else {
                 for (size_t i = 0; i < size_; ++i) (*this)(i) = e(i);

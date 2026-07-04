@@ -94,14 +94,17 @@ namespace linalg {
         MatrixView& operator=(const MatExpr<E>& expr) requires (Mutable && !Conj) {
             const auto& e = expr.self();
             BOUNDS_CHECK(rows() == e.rows() && cols() == e.cols());
-            const bool dep = e.depends_on(static_cast<const void*>(data_), memory_span());
-            if (dep) {
-                // Materialise into a temporary to break the aliasing cycle
-                std::vector<T> temp(rows() * cols());
+
+			constexpr bool elementwise = detail::expr_is_elementwise_v<E>;
+            const bool depends = !elementwise && e.depends_on(static_cast<const void*>(data_), memory_span());
+            if (depends) {
+                // Materialise into a temporary to break the aliasing cycle.
+                std::vector<T, UninitAlignedAllocator<T>> temp(rows() * cols());
+                T* LINALG_RESTRICT tp = temp.data();
                 size_t k = 0;
                 for (size_t i = 0; i < rows(); ++i)
                     for (size_t j = 0; j < cols(); ++j)
-                        temp[k++] = static_cast<T>(e(i, j));
+                        ::new (static_cast<void*>(tp + (k++))) T(static_cast<T>(e(i, j)));
                 k = 0;
                 for (size_t i = 0; i < rows(); ++i)
                     for (size_t j = 0; j < cols(); ++j)
