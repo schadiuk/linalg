@@ -168,8 +168,9 @@ namespace linalg {
     Matrix<T, L> piv_to_P(const Vector<size_t>& piv) {
         const size_t n = piv.size();
         Matrix<T, L> mat = Matrix<T, L>::zeros(n, n);
+        LINALG_VECTORIZE
         for (size_t j = 0; j < n; ++j) {
-            BOUNDS_CHECK(piv[j] < n);
+            // BOUNDS_CHECK(piv[j] < n);
             mat(piv[j], j) = T(1);
         };
         return mat;
@@ -215,7 +216,8 @@ namespace linalg {
                 for (size_t j = 0; j < nb; ++j) {
                     const size_t kj  = k + j;
                     const size_t len = m - kj;
-                    Vector<T> x = W.col(kj, kj, len);
+                    Vector<T> x(len);
+                    for (size_t i = 0; i < len; ++i) x[i] = W(kj + i, kj);
                     auto [v, beta] = detail::householder_reflector(x);
                     vs[kj] = v;
                     betas[kj] = beta;
@@ -253,7 +255,8 @@ namespace linalg {
                 };
                 ++rank_est;
                 // Compute Householder reflector for W[k:m, k].
-                Vector<T> x = W.col(k, k, len);
+                Vector<T> x(len);
+                for (size_t i = 0; i < len; ++i) x[i] = W(k + i, k);
                 auto [v, beta] = detail::householder_reflector(x);
                 vs[k] = v;
                 betas[k] = beta;
