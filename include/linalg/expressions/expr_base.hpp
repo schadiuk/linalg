@@ -5,7 +5,25 @@
 
 namespace linalg {
 	template<typename T, Layout L> requires Scalar<T> class Matrix;
+	template<typename T> requires Scalar<T> class Vector;
 	template<typename T, Layout L, bool Trans, bool Conj, bool Mutable> class MatrixView;
+
+	namespace detail {
+		template<typename E>
+		struct is_owning_leaf : std::false_type {};
+
+		template<typename T, Layout L>
+		struct is_owning_leaf<Matrix<T, L>> : std::true_type {};
+
+		template<typename T>
+		struct is_owning_leaf<Vector<T>> : std::true_type {};
+
+		template<typename E>
+		inline constexpr bool is_owning_leaf_v = is_owning_leaf<E>::value;
+ 
+		template<typename E>
+		using operand_t = std::conditional_t<is_owning_leaf_v<E>, const E&, E>;
+	};
 
 	/// @brief  Key matrix expression base class, providing common interface and used in lazy CRTP-induced evaluation.
 	/// @tparam T CRTP-required template.

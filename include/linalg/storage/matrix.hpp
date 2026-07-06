@@ -10,6 +10,8 @@ namespace linalg {
     // Forward declarations
     template<typename U> struct MatExpr;
     template<typename E1, typename E2> struct GemmExpr;
+    template<typename E1, typename E2> struct MatAddExpr;
+    template<typename E1, typename E2> struct MatSubExpr;
 
     /// @brief Main matrix storage class.
     /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
@@ -420,6 +422,44 @@ namespace linalg {
         
         template<typename E1, typename E2>
         Matrix<T, L>& operator=(const GemmExpr<E1, E2>& expr);
+
+        // GEMM-accumulate dispatch hooks:
+        template<typename E, typename Ea, typename Eb>
+        Matrix(const MatAddExpr<E, GemmExpr<Ea, Eb>>& expr);
+        template<typename E, typename Ea, typename Eb>
+        Matrix<T, L>& operator=(const MatAddExpr<E, GemmExpr<Ea, Eb>>& expr);
+
+        template<typename Ea, typename Eb, typename E>
+        Matrix(const MatAddExpr<GemmExpr<Ea, Eb>, E>& expr);
+        template<typename Ea, typename Eb, typename E>
+        Matrix<T, L>& operator=(const MatAddExpr<GemmExpr<Ea, Eb>, E>& expr);
+
+        template<typename E, typename Ea, typename Eb>
+        Matrix(const MatSubExpr<E, GemmExpr<Ea, Eb>>& expr);
+        template<typename E, typename Ea, typename Eb>
+        Matrix<T, L>& operator=(const MatSubExpr<E, GemmExpr<Ea, Eb>>& expr);
+
+        template<typename Ea, typename Eb, typename E>
+        Matrix(const MatSubExpr<GemmExpr<Ea, Eb>, E>& expr);
+        template<typename Ea, typename Eb, typename E>
+        Matrix<T, L>& operator=(const MatSubExpr<GemmExpr<Ea, Eb>, E>& expr);
+
+    private:
+        template<typename ESeed, typename Ea, typename Eb>
+        Matrix<T, L>& assign_gemm_accumulate(const ESeed& seed, T gemm_alpha, const Ea& a, const Eb& b, T gemm_beta = T(1)) {
+            const size_t bytes = data_.size() * sizeof(T);
+            const void* dst = static_cast<const void*>(data_.data());
+            const bool aliased = seed.depends_on(dst, bytes) || a.depends_on(dst, bytes) || b.depends_on(dst, bytes);
+            if (aliased) {
+                Matrix<T, L> tmp(seed);
+                gemm(gemm_alpha, a, b, gemm_beta, tmp);
+                *this = std::move(tmp);
+            } else {
+                *this = seed;
+                gemm(gemm_alpha, a, b, gemm_beta, *this);
+            };
+            return *this;
+        };
 
     private:
         // Data storage and dimensions
