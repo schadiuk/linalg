@@ -106,6 +106,14 @@ namespace linalg {
 			return (p < end) && (other_end > start);
 		};
 
+		/// @brief O(1) member-wise swap: exchanges backing buffers/sizes rather than elements.
+		/// @param other Vector to swap contents with.
+		/// @note Both operands own independent, non-aliased heap buffers, so this is a pointer exchange regardless of length.
+		void swap(Vector<T>& other) noexcept {
+			data_.swap(other.data_);
+			std::swap(size_, other.size_);
+		};
+
 		size_t size() const { return size_; };
 		T* data() { return data_.data(); };
 		const T* data() const { return data_.data(); };
