@@ -3,6 +3,7 @@
 #include <linalg/storage/matrix.hpp>
 #include <linalg/storage/vector.hpp>
 #include <linalg/expressions/vector_expr.hpp>
+#include <cstring>
 
 namespace linalg {
 	namespace detail {
@@ -10,6 +11,10 @@ namespace linalg {
 		template<typename T> struct is_complex_impl : std::false_type {};
         template<typename T> struct is_complex_impl<std::complex<T>> : std::true_type {};
         template<typename T> inline constexpr bool is_complex_v = is_complex_impl<std::remove_cvref_t<T>>::value;
+
+		// (value, index) pair used by the chunked argmax/argmin reduction.
+		template<typename V>
+		struct IdxVal { V val; size_t idx; };
 
 		template<typename T>
 		LINALG_INLINE double abs_as_double(const T& v) noexcept {
@@ -109,7 +114,7 @@ namespace linalg {
 			LINALG_VECTORIZE
 			for (size_t i = s; i < n4; i += 4) {
 				if constexpr (is_complex_v<T>) {
-					s0 += std::abs(std::real(x[i]))   + std::abs(std::imag(x[i]));
+					s0 += std::abs(std::real(x[i])) + std::abs(std::imag(x[i]));
 					s1 += std::abs(std::real(x[i+1])) + std::abs(std::imag(x[i+1]));
 					s2 += std::abs(std::real(x[i+2])) + std::abs(std::imag(x[i+2]));
 					s3 += std::abs(std::real(x[i+3])) + std::abs(std::imag(x[i+3]));
@@ -291,6 +296,33 @@ namespace linalg {
 		});
 	};
 
+	template<typename T>
+	LINALG_INLINE void copy(const Vector<T>& x, Vector<T>& y) {
+		BOUNDS_CHECK(x.size() == y.size());
+		if (x.size() == 0) return;
+		std::memcpy(y.data(), x.data(), x.size() * sizeof(T));
+	};
+
+	template<typename T, bool SrcMutable>
+	LINALG_INLINE void copy(const VectorView<T, SrcMutable>& x, Vector<T>& y) {
+		BOUNDS_CHECK(x.size() == y.size());
+		const size_t n = x.size();
+		if (n == 0) return;
+		if (x.stride() == 1) {
+			std::memcpy(y.data(), x.data(), n * sizeof(T));
+		} else {
+			for (size_t i = 0; i < n; ++i) y[i] = x(i);
+		};
+	};
+
+	template<typename T, Layout L>
+	LINALG_INLINE void copy(const Matrix<T, L>& A, Matrix<T, L>& B) {
+		BOUNDS_CHECK(A.rows() == B.rows() && A.cols() == B.cols());
+		const size_t total = A.rows() * A.cols();
+		if (total == 0) return;
+		std::memcpy(B.data(), A.data(), total * sizeof(T));
+	};
+
 	template<typename EX, typename T>
 	LINALG_INLINE void copy(const VecExpr<EX>& x, Vector<T>& y) {
 		BOUNDS_CHECK(x.self().size() == y.size());
@@ -317,11 +349,7 @@ namespace linalg {
 
 	template<typename T>
 	LINALG_INLINE void swap(Vector<T>& x, Vector<T>& y) {
-		BOUNDS_CHECK(x.size() == y.size());
-		const size_t n = x.size();
-		parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y](size_t s, size_t e) {
-			for (size_t i = s; i < e; ++i) std::swap(x[i], y[i]);
-		});
+		x.swap(y);
 	};
 	
 	template<typename T>
@@ -349,20 +377,48 @@ namespace linalg {
 	LINALG_INLINE 
 	/// @brief Index of maximum absolute value. 
 	/// @param x Vector expression.
-	/// @return The index.
+	/// @return The index (first occurrence wins on ties).
 	size_t iamax(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
 		const size_t n = xx.size();
 		if (n == 0) return 0;
-		size_t max_idx = 0;
-		auto max_val = std::abs(xx(0));
-
-		for (size_t i = 1; i < n; ++i) {
-			auto val = std::abs(xx(i));
-			if (val > max_val) {
-				max_val = val;
-				max_idx = i;
+		using AbsT = decltype(std::abs(xx(0)));
+		if (n < PARALLEL_THRESHOLD_REDUCE) {
+			size_t max_idx = 0;
+			AbsT max_val = std::abs(xx(0));
+			for (size_t i = 1; i < n; ++i) {
+				AbsT val = std::abs(xx(i));
+				if (val > max_val) { max_val = val; max_idx = i; };
 			};
+			return max_idx;
+		};
+
+		auto& pool = ThreadPool::instance();
+		const size_t num_threads = std::min(pool.thread_count(), (n + PARALLEL_THRESHOLD_REDUCE - 1) / PARALLEL_THRESHOLD_REDUCE);
+		std::vector<detail::IdxVal<AbsT>> partials(num_threads);
+		std::vector<std::future<void>> futures;
+		futures.reserve(num_threads);
+		const size_t chunk = n / num_threads, rem = n % num_threads;
+		size_t offset = 0;
+		for (size_t t = 0; t < num_threads; ++t) {
+			const size_t cnt = chunk + (t < rem ? 1 : 0);
+			const size_t s = offset, e = s + cnt;
+			offset = e;
+			futures.push_back(pool.enqueue([&xx, &partials, s, e, t]() {
+				size_t local_idx = s;
+				AbsT local_val = std::abs(xx(s));
+				for (size_t i = s + 1; i < e; ++i) {
+					AbsT val = std::abs(xx(i));
+					if (val > local_val) { local_val = val; local_idx = i; };
+				};
+				partials[t] = detail::IdxVal<AbsT>{ local_val, local_idx };
+			}));
+		};
+		for (auto& f : futures) f.get();
+		size_t max_idx = partials[0].idx;
+		AbsT max_val = partials[0].val;
+		for (size_t t = 1; t < num_threads; ++t) {
+			if (partials[t].val > max_val) { max_val = partials[t].val; max_idx = partials[t].idx; };
 		};
 		return max_idx;
 	};
@@ -371,20 +427,47 @@ namespace linalg {
 	LINALG_INLINE 
 	/// @brief Index of minimum absolute value. 
 	/// @param x Vector expression.
-	/// @return The index.
+	/// @return The index (first occurrence wins on ties).
 	size_t iamin(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
 		const size_t n = xx.size();
 		if (n == 0) return 0;
-		size_t min_idx = 0;
-		auto min_val = std::abs(xx(0));
-
-		for (size_t i = 1; i < n; ++i) {
-			auto val = std::abs(xx(i));
-			if (val < min_val) {
-				min_val = val;
-				min_idx = i;
+		using AbsT = decltype(std::abs(xx(0)));
+		if (n < PARALLEL_THRESHOLD_REDUCE) {
+			size_t min_idx = 0;
+			AbsT min_val = std::abs(xx(0));
+			for (size_t i = 1; i < n; ++i) {
+				AbsT val = std::abs(xx(i));
+				if (val < min_val) { min_val = val; min_idx = i; };
 			};
+			return min_idx;
+		};
+		auto& pool = ThreadPool::instance();
+		const size_t num_threads = std::min(pool.thread_count(), (n + PARALLEL_THRESHOLD_REDUCE - 1) / PARALLEL_THRESHOLD_REDUCE);
+		std::vector<detail::IdxVal<AbsT>> partials(num_threads);
+		std::vector<std::future<void>> futures;
+		futures.reserve(num_threads);
+		const size_t chunk = n / num_threads, rem = n % num_threads;
+		size_t offset = 0;
+		for (size_t t = 0; t < num_threads; ++t) {
+			const size_t cnt = chunk + (t < rem ? 1 : 0);
+			const size_t s = offset, e = s + cnt;
+			offset = e;
+			futures.push_back(pool.enqueue([&xx, &partials, s, e, t]() {
+				size_t local_idx = s;
+				AbsT local_val = std::abs(xx(s));
+				for (size_t i = s + 1; i < e; ++i) {
+					AbsT val = std::abs(xx(i));
+					if (val < local_val) { local_val = val; local_idx = i; };
+				};
+				partials[t] = detail::IdxVal<AbsT>{ local_val, local_idx };
+			}));
+		};
+		for (auto& f : futures) f.get();
+		size_t min_idx = partials[0].idx;
+		AbsT min_val = partials[0].val;
+		for (size_t t = 1; t < num_threads; ++t) {
+			if (partials[t].val < min_val) { min_val = partials[t].val; min_idx = partials[t].idx; };
 		};
 		return min_idx;
 	};
