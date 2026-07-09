@@ -560,37 +560,22 @@ namespace linalg {
         if (n == 0) return 0.0;
         using T = std::remove_cvref_t<decltype(xx(0))>;
 		const T* xr = detail::dense_data<T>(xx);
+		Vector<T> tmp;
+		if (!xr) { tmp = Vector<T>(xx); xr = tmp.data(); };
+		const T* LINALG_RESTRICT xa = detail::assume_aligned<64>(xr);
     	// Pass 1: scale = max(abs(x[i])).
 		double scale = 0.0;
-		if (xr) {
-			const T* LINALG_RESTRICT xa = detail::assume_aligned<64>(xr);
-			LINALG_VECTORIZE
-			for (size_t i = 0; i < n; ++i) {
-				const double a = detail::abs_as_double(xa[i]);
-				if (a > scale) scale = a;
-			};
-		} else {
-			for (size_t i = 0; i < n; ++i) {
-				const double a = detail::abs_as_double(xx(i));
-				if (a > scale) scale = a;
-			};
-		}
-		if (scale == 0.0) return 0.0;
-		// Pass 2: parallel  SUM(|x[i]|/scale)^2.
-		double ssq;
-		if (xr) {
-			const T* LINALG_RESTRICT xa = detail::assume_aligned<64>(xr);
-			ssq = parallel_reduce_chunks<double>(n, PARALLEL_THRESHOLD_REDUCE,
-				[xa, scale](size_t s, size_t e) {
-					return detail::nrm2_ssq_chunk(xa, s, e, scale);
-				});
-		} else {
-			ssq = parallel_reduce<double>(n, PARALLEL_THRESHOLD_REDUCE,
-				[&xx, scale](size_t i) -> double {
-					const double a = detail::abs_as_double(xx(i)) / scale;
-					return a * a;
-				});
+		LINALG_VECTORIZE
+		for (size_t i = 0; i < n; ++i) {
+			const double a = detail::abs_as_double(xa[i]);
+			if (a > scale) scale = a;
 		};
+		if (scale == 0.0) return 0.0;
+		// Pass 2: parallel SUM(|x[i]|/scale)^2.
+		const double ssq = parallel_reduce_chunks<double>(n, PARALLEL_THRESHOLD_REDUCE,
+			[xa, scale](size_t s, size_t e) {
+				return detail::nrm2_ssq_chunk(xa, s, e, scale);
+			});
 		return scale * std::sqrt(ssq);
     };
 
