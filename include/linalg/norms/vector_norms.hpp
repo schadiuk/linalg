@@ -10,9 +10,11 @@ namespace linalg {
     template<typename E>
     double norm_l0(const VecExpr<E>& x) {
         const auto& xx = x.self();
-        size_t count = 0;
-        for (size_t i = 0; i < xx.size(); ++i) if (xx(i) != decltype(xx(i)){}) ++count;
-        return static_cast<double>(count);
+        const size_t n = xx.size();
+        if (n == 0) return 0.0;
+        using T = std::remove_cvref_t<decltype(xx(0))>;
+        return parallel_reduce<double>(n, PARALLEL_THRESHOLD_REDUCE,
+            [&xx](size_t i) -> double { return (xx(i) != T{}) ? 1.0 : 0.0; });
     };
 
     /// @brief L1 norm.
@@ -23,29 +25,8 @@ namespace linalg {
         const auto& xx = x.self();
         const size_t n = xx.size();
         if (n == 0) return 0.0;
-        if (n < PARALLEL_THRESHOLD_REDUCE) {
-            double s = 0.0;
-            for (size_t i = 0; i < n; ++i) s += std::abs(xx(i));
-            return s;
-        };    
-        auto& pool = ThreadPool::instance();
-        const size_t nt = std::min(pool.thread_count(), (n + PARALLEL_THRESHOLD_REDUCE - 1) / PARALLEL_THRESHOLD_REDUCE);
-        std::vector<Padded<double>> partials(nt);
-        std::vector<std::future<void>> futures;
-        size_t chunk = n / nt, rem = n % nt, offset = 0;
-        for (size_t t = 0; t < nt; ++t) {
-            const size_t cnt = chunk + (t < rem ? 1 : 0), start = offset;
-            futures.push_back(pool.enqueue([&xx, &partials, start, cnt, t]() {
-                double ps = 0.0;
-                for (size_t i = 0; i < cnt; ++i) ps += std::abs(xx(start + i));
-                partials[t].value = ps;
-            }));
-            offset += cnt;
-        };
-        for (auto& f : futures) f.get();
-        double s = 0.0;
-        for (const auto& p : partials) s += p.value;
-        return s;
+        return parallel_reduce<double>(n, PARALLEL_THRESHOLD_REDUCE,
+            [&xx](size_t i) -> double { return std::abs(xx(i)); });
     };
 
     /// @brief L2 norm
@@ -62,12 +43,9 @@ namespace linalg {
         const auto& xx = x.self();
         const size_t n = xx.size();
         if (n == 0) return 0.0;
-        double res = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            const double v = std::abs(xx(i));
-            if (v > res) res = v;
-        };
-        return res;
+        return parallel_reduce_assoc<double>(n, PARALLEL_THRESHOLD_REDUCE, 0.0,
+            [&xx](size_t i) -> double { return std::abs(xx(i)); },
+            [](double a, double b) { return std::max(a, b); });
     };
 
     /// @brief Negative infinity "norm".
@@ -78,12 +56,9 @@ namespace linalg {
         const auto& xx = x.self();
         const size_t n = xx.size();
         if (n == 0) return 0.0;
-        double res = std::abs(xx(0));
-        for (size_t i = 1; i < n; ++i) {
-            const double v = std::abs(xx(i));
-            if (v < res) res = v;
-        };
-        return res;
+        return parallel_reduce_assoc<double>(n, PARALLEL_THRESHOLD_REDUCE, std::numeric_limits<double>::infinity(),
+            [&xx](size_t i) -> double { return std::abs(xx(i)); },
+            [](double a, double b) { return std::min(a, b); });
     };
 
     /// @brief Vector norm dispatch.
