@@ -90,19 +90,68 @@ namespace linalg {
                     };
                 };
             };
+
+            template<typename T, bool ConjA, bool ConjB>
+            LINALG_INLINE void gemm_microkernel_row_conj(
+                    const T* LINALG_RESTRICT A, const T* LINALG_RESTRICT B,
+                    T* LINALG_RESTRICT C, T alpha,
+                    size_t lda, size_t ldb, size_t ldc,
+                    size_t i0, size_t i1,
+                    size_t j0, size_t j1,
+                    size_t k0, size_t k1) {
+                for (size_t i = i0; i < i1; ++i) {
+                    const T* LINALG_RESTRICT a_row = A + i * lda;
+                    T* LINALG_RESTRICT c_row = C + i * ldc;
+                    for (size_t k = k0; k < k1; ++k) {
+                        const T a_val = ConjA ? conj(a_row[k]) : a_row[k];
+                        const T a_ik = alpha * a_val;
+                        const T* LINALG_RESTRICT b_row = B + k * ldb;
+                        LINALG_VECTORIZE
+                        for (size_t j = j0; j < j1; ++j)
+                            c_row[j] += a_ik * (ConjB ? conj(b_row[j]) : b_row[j]);
+                    };
+                };
+            };
+
+            template<typename T, bool ConjA, bool ConjB>
+            LINALG_INLINE void gemm_microkernel_col_conj(
+                    const T* LINALG_RESTRICT A, const T* LINALG_RESTRICT B,
+                    T* LINALG_RESTRICT C, T alpha,
+                    size_t lda, size_t ldb, size_t ldc,
+                    size_t i0, size_t i1,
+                    size_t j0, size_t j1,
+                    size_t k0, size_t k1) {
+                for (size_t j = j0; j < j1; ++j) {
+                    const T* LINALG_RESTRICT b_col = B + j * ldb;
+                    T* LINALG_RESTRICT c_col = C + j * ldc;
+                    for (size_t k = k0; k < k1; ++k) {
+                        const T b_val = ConjB ? conj(b_col[k]) : b_col[k];
+                        const T b_kj = alpha * b_val;
+                        const T* LINALG_RESTRICT a_col = A + k * lda;
+                        LINALG_VECTORIZE
+                        for (size_t i = i0; i < i1; ++i)
+                            c_col[i] += (ConjA ? conj(a_col[i]) : a_col[i]) * b_kj;
+                    };
+                };
+            };
         };
 
         template<typename T, Layout L>
         void gemm_blocked(T alpha, const T* LINALG_RESTRICT a_ptr, size_t lda, const T* LINALG_RESTRICT b_ptr, size_t ldb,
                 T* LINALG_RESTRICT c_ptr, size_t ldc, size_t M, size_t N, size_t K) {
             if (M == 0 || N == 0 || K == 0) return;
-            const size_t bs = L1_BLOCK * 2;
+            auto& pool = ThreadPool::instance();
+            // Adaptive tile size:
+            size_t bs = L1_BLOCK * 2;
+            const size_t avail_threads = pool.thread_count();
+            if (avail_threads > 1) {
+                while (bs > 1 && ((M + bs - 1) / bs) * ((N + bs - 1) / bs) < avail_threads) bs /= 2;
+            };
             const size_t ni_blocks = (M + bs - 1) / bs;
             const size_t nj_blocks = (N + bs - 1) / bs;
             const size_t nk_blocks = (K + bs - 1) / bs;
             const size_t total_ij = ni_blocks * nj_blocks;
-            auto& pool = ThreadPool::instance();
-            const size_t num_threads = std::min(pool.thread_count(), total_ij);
+            const size_t num_threads = std::min(avail_threads, total_ij);
             std::vector<std::future<void>> futures;
             futures.reserve(num_threads);
             for (size_t t = 0; t < num_threads; ++t) {
@@ -129,30 +178,51 @@ namespace linalg {
             for (auto& f : futures) f.get();
         };
 
+        template<typename T, Layout L, bool ConjA, bool ConjB>
+        void gemm_blocked_conj(T alpha, const T* LINALG_RESTRICT a_ptr, size_t lda, const T* LINALG_RESTRICT b_ptr, size_t ldb,
+                T* LINALG_RESTRICT c_ptr, size_t ldc, size_t M, size_t N, size_t K) {
+            if (M == 0 || N == 0 || K == 0) return;
+            auto& pool = ThreadPool::instance();
+            size_t bs = L1_BLOCK * 2;
+            const size_t avail_threads = pool.thread_count();
+            if (avail_threads > 1) {
+                while (bs > 1 && ((M + bs - 1) / bs) * ((N + bs - 1) / bs) < avail_threads) bs /= 2;
+            };
+            const size_t ni_blocks = (M + bs - 1) / bs;
+            const size_t nj_blocks = (N + bs - 1) / bs;
+            const size_t nk_blocks = (K + bs - 1) / bs;
+            const size_t total_ij = ni_blocks * nj_blocks;
+            const size_t num_threads = std::min(avail_threads, total_ij);
+            std::vector<std::future<void>> futures;
+            futures.reserve(num_threads);
+            for (size_t t = 0; t < num_threads; ++t) {
+                futures.push_back(pool.enqueue([=]() {
+                    for (size_t blk = t; blk < total_ij; blk += num_threads) {
+                        const size_t ib = blk / nj_blocks;
+                        const size_t jb = blk % nj_blocks;
+                        const size_t i0 = ib * bs, i1 = std::min(i0 + bs, M);
+                        const size_t j0 = jb * bs, j1 = std::min(j0 + bs, N);
+                        for (size_t kb = 0; kb < nk_blocks; ++kb) {
+                            const size_t k0 = kb * bs, k1 = std::min(k0 + bs, K);
+                            if constexpr (L == Layout::RowMajor)
+                                kernels::gemm_microkernel_row_conj<T, ConjA, ConjB>(a_ptr, b_ptr, c_ptr, alpha,
+                                                            lda, ldb, ldc,
+                                                            i0, i1, j0, j1, k0, k1);
+                            else
+                                kernels::gemm_microkernel_col_conj<T, ConjA, ConjB>(a_ptr, b_ptr, c_ptr, alpha,
+                                                            lda, ldb, ldc,
+                                                            i0, i1, j0, j1, k0, k1);
+                        };
+                    };
+                }));
+            };
+            for (auto& f : futures) f.get();
+        };
+
         //Parallelised materialisation helper.
         template<typename T, Layout L, typename E>
         Matrix<T, L> materialise(const MatExpr<E>& e) {
-            const auto& src = e.self();
-            const size_t M  = src.rows(), N = src.cols();
-            Matrix<T, L> dst(M, N);
-            if constexpr (L == Layout::RowMajor) {
-                parallel_for(M, 1, [&src, &dst, N](size_t rs, size_t re) {
-                    for (size_t i = rs; i < re; ++i) {
-                        T* LINALG_RESTRICT dp = dst.data() + i * dst.stride();
-                        LINALG_VECTORIZE
-                        for (size_t j = 0; j < N; ++j) dp[j] = static_cast<T>(src(i, j));
-                    };
-                });
-            } else {
-                parallel_for(N, 1, [&src, &dst, M](size_t cs, size_t ce) {
-                    for (size_t j = cs; j < ce; ++j) {
-                        T* LINALG_RESTRICT dp = dst.data() + j * dst.stride();
-                        LINALG_VECTORIZE
-                        for (size_t i = 0; i < M; ++i) dp[i] = static_cast<T>(src(i, j));
-                    };
-                });
-            };
-            return dst;
+            return Matrix<T, L>(e.self());
         };
 
         template<typename T, Layout L>
@@ -166,9 +236,20 @@ namespace linalg {
             };
             gemm_blocked<T, L>(alpha, ap, lda, bp, ldb, cp, ldc, M, N, K);
         };
-    };
 
-    
+        // Conj-aware counterpart of gemm_direct: dispatched from gemm() when either operand's raw-pointer descriptor carries conj=true.
+        template<typename T, Layout L, bool ConjA, bool ConjB>
+        LINALG_INLINE void gemm_direct_conj(T alpha, const T* LINALG_RESTRICT ap, size_t lda, const T* LINALG_RESTRICT bp, size_t ldb, T* LINALG_RESTRICT cp, size_t ldc, size_t M, size_t N, size_t K) {
+            if (M * N * K < static_cast<size_t>(PARALLEL_THRESHOLD_COMPUTE) * 10) {
+                if constexpr (L == Layout::RowMajor)
+                    kernels::gemm_microkernel_row_conj<T, ConjA, ConjB>(ap, bp, cp, alpha, lda, ldb, ldc, 0, M, 0, N, 0, K);
+                else
+                    kernels::gemm_microkernel_col_conj<T, ConjA, ConjB>(ap, bp, cp, alpha, lda, ldb, ldc, 0, M, 0, N, 0, K);
+                return;
+            };
+            gemm_blocked_conj<T, L, ConjA, ConjB>(alpha, ap, lda, bp, ldb, cp, ldc, M, N, K);
+        };
+    };
 
     template<typename T, Layout L, typename EA, typename EB>
     LINALG_INLINE 
@@ -193,21 +274,117 @@ namespace linalg {
             });
         };
         if (alpha == T(0)) return;
-        // Fast path: extract pointer.
-        auto a_info = detail::raw_mat_info<T>(A_expr);
-        auto b_info = detail::raw_mat_info<T>(B_expr);
-        // Materialise only the operand(s) that could not yield a raw pointer.
+
+        auto a_info_raw = detail::raw_mat_info<T>(A_expr);
+        auto b_info_raw = detail::raw_mat_info<T>(B_expr);
+        const bool a_usable = a_info_raw.has_value() && a_info_raw->layout == L;
+        const bool b_usable = b_info_raw.has_value() && b_info_raw->layout == L;
+
         Matrix<T, L> A_tmp, B_tmp;
-        if (!a_info) A_tmp = detail::materialise<T, L>(A_expr);
-        if (!b_info) B_tmp = detail::materialise<T, L>(B_expr);
-        const T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_info ? a_info->data : A_tmp.data());
-        const T* LINALG_RESTRICT bp = detail::assume_aligned<64>(b_info ? b_info->data : B_tmp.data());
-        const size_t lda = a_info ? a_info->lda : A_tmp.stride();
-        const size_t ldb = b_info ? b_info->lda : B_tmp.stride();
-        detail::gemm_direct<T, L>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+        if (!a_usable) A_tmp = detail::materialise<T, L>(A_expr);
+        if (!b_usable) B_tmp = detail::materialise<T, L>(B_expr);
+        const T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_usable ? a_info_raw->data : A_tmp.data());
+        const T* LINALG_RESTRICT bp = detail::assume_aligned<64>(b_usable ? b_info_raw->data : B_tmp.data());
+        const size_t lda = a_usable ? a_info_raw->lda : A_tmp.stride();
+        const size_t ldb = b_usable ? b_info_raw->lda : B_tmp.stride();
+
+        const bool a_conj = a_usable && a_info_raw->conj;
+        const bool b_conj = b_usable && b_info_raw->conj;
+        if (!a_conj && !b_conj) {
+            detail::gemm_direct<T, L>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+        } else if (a_conj && !b_conj) {
+            detail::gemm_direct_conj<T, L, true, false>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+        } else if (!a_conj && b_conj) {
+            detail::gemm_direct_conj<T, L, false, true>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+        } else {
+            detail::gemm_direct_conj<T, L, true, true>(alpha, ap, lda, bp, ldb, cp, C.stride(), M, N, K);
+        };
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E1, typename E2>
+    Matrix<T, L>::Matrix(const GemmExpr<E1, E2>& expr) : Matrix(expr.rows(), expr.cols()) {
+        gemm(T(1), expr.a, expr.b, T(0), *this);
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E1, typename E2>
+    Matrix<T, L>& Matrix<T, L>::operator=(const GemmExpr<E1, E2>& expr) {
+        BOUNDS_CHECK(rows_ == expr.rows() && cols_ == expr.cols());
+        const size_t bytes = data_.size() * sizeof(T);
+        const void* dst = static_cast<const void*>(data_.data());
+        if (expr.a.depends_on(dst, bytes) || expr.b.depends_on(dst, bytes)) {
+            Matrix<T, L> tmp(rows_, cols_);
+            gemm(T(1), expr.a, expr.b, T(0), tmp);
+            *this = std::move(tmp);
+        } else {
+            gemm(T(1), expr.a, expr.b, T(0), *this);
+        };
+        return *this;
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E, typename Ea, typename Eb>
+    Matrix<T, L>::Matrix(const MatAddExpr<E, GemmExpr<Ea, Eb>>& expr) : Matrix(expr.e1) {
+        gemm(T(1), expr.e2.a, expr.e2.b, T(1), *this);
+    };
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E, typename Ea, typename Eb>
+    Matrix<T, L>& Matrix<T, L>::operator=(const MatAddExpr<E, GemmExpr<Ea, Eb>>& expr) {
+        BOUNDS_CHECK(rows_ == expr.rows() && cols_ == expr.cols());
+        return assign_gemm_accumulate(expr.e1, T(1), expr.e2.a, expr.e2.b);
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename Ea, typename Eb, typename E>
+    Matrix<T, L>::Matrix(const MatAddExpr<GemmExpr<Ea, Eb>, E>& expr) : Matrix(expr.e2) {
+        gemm(T(1), expr.e1.a, expr.e1.b, T(1), *this);
+    };
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename Ea, typename Eb, typename E>
+    Matrix<T, L>& Matrix<T, L>::operator=(const MatAddExpr<GemmExpr<Ea, Eb>, E>& expr) {
+        BOUNDS_CHECK(rows_ == expr.rows() && cols_ == expr.cols());
+        return assign_gemm_accumulate(expr.e2, T(1), expr.e1.a, expr.e1.b);
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E, typename Ea, typename Eb>
+    Matrix<T, L>::Matrix(const MatSubExpr<E, GemmExpr<Ea, Eb>>& expr) : Matrix(expr.e1) {
+        gemm(T(-1), expr.e2.a, expr.e2.b, T(1), *this);
+    };
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename E, typename Ea, typename Eb>
+    Matrix<T, L>& Matrix<T, L>::operator=(const MatSubExpr<E, GemmExpr<Ea, Eb>>& expr) {
+        BOUNDS_CHECK(rows_ == expr.rows() && cols_ == expr.cols());
+        return assign_gemm_accumulate(expr.e1, T(-1), expr.e2.a, expr.e2.b);
+    };
+
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename Ea, typename Eb, typename E>
+    Matrix<T, L>::Matrix(const MatSubExpr<GemmExpr<Ea, Eb>, E>& expr) : Matrix(expr.e2) {
+        gemm(T(1), expr.e1.a, expr.e1.b, T(-1), *this);
+    };
+    template<typename T, Layout L> requires Scalar<T>
+    template<typename Ea, typename Eb, typename E>
+    Matrix<T, L>& Matrix<T, L>::operator=(const MatSubExpr<GemmExpr<Ea, Eb>, E>& expr) {
+        BOUNDS_CHECK(rows_ == expr.rows() && cols_ == expr.cols());
+        return assign_gemm_accumulate(expr.e2, T(1), expr.e1.a, expr.e1.b, T(-1));
     };
 
     namespace detail {
+        // Lightweight offset view: maps `operator()(i,j) -> A(i+off, j+off)`. Lets trsm_col_solve (and its callers below) operate on a diagonal sub-block of A.
+        template<typename AM>
+        struct TrsmDiagWindow {
+            const AM& A;
+            size_t off;
+            LINALG_INLINE auto operator()(size_t i, size_t j) const { return A(i + off, j + off); }
+        };
+
+        template<typename AM>
+        LINALG_INLINE TrsmDiagWindow<AM> trsm_diag_window(const AM& A, size_t off) {
+            return TrsmDiagWindow<AM>{A, off};
+        };
+
         // In-place triangular solve on a contiguous vector.
         template<typename T, typename AM>
         LINALG_INLINE void trsm_col_solve(char uplo, char trans, char diag, const AM& A, T* xp, size_t N) {
@@ -312,6 +489,8 @@ namespace linalg {
                         // Thread-local column buffer: M rows × up-to-TRSM_RHS_BLOCK cols, stored column-major so trsm_col_solve sees contiguous data.
                         using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
                         AlignedBuf buf(M * TRSM_RHS_BLOCK);
+                        constexpr size_t kb_max = L2_BLOCK / 2;
+                        AlignedBuf a_panel_buf(M * kb_max);
                         for (size_t blk = t; blk < n_blocks; blk += num_threads) {
                             const size_t j0 = blk * TRSM_RHS_BLOCK;
                             const size_t j1 = std::min(j0 + TRSM_RHS_BLOCK, N_rhs);
@@ -336,9 +515,14 @@ namespace linalg {
                             } else {
                                 // ColMajor: columns j0...j1-1 are already contiguous segments; use a look-ahead panel update so A is traversed once per block.
                                 const bool do_trans = (trans == 'T' || trans == 't' || trans == 'C' || trans == 'c');
+                                const bool do_conj = (trans == 'C' || trans == 'c');
                                 const bool upper = (uplo == 'U' || uplo == 'u');
                                 // Determine whether the look-ahead sweep goes forward (k=0...M) or backward (k=M-1...0).  Forward sweep: lower+notrans or upper+trans.
                                 const bool forward = (upper == do_trans);
+                                auto opA = [&](size_t i, size_t j) -> T {
+                                    T v = do_trans ? static_cast<T>(A(j, i)) : static_cast<T>(A(i, j));
+                                    return do_conj ? conj(v) : v;
+                                };
                                 // Minimum size to justify the GEMM update overhead
                                 const size_t LOOKAHEAD_THRESH = 32;
                                 if (M >= LOOKAHEAD_THRESH && nb > 1) {
@@ -348,25 +532,22 @@ namespace linalg {
                                         T* LINALG_RESTRICT dst = bp + jj * M;
                                         LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) dst[i] = src[i];
                                     };
-                                    constexpr size_t kb = L2_BLOCK / 2; // Reuse blocked size constant.
+                                    constexpr size_t kb = kb_max;
+                                    T* LINALG_RESTRICT ap_scratch = detail::assume_aligned<64>(a_panel_buf.data());
                                     if (forward) {
                                         for (size_t k = 0; k < M; k += kb) {
                                             const size_t ke = std::min(k + kb, M);
                                             const size_t ks = ke - k;  // Actual panel height.
-                                            // Solve the panel rows: bp[k:ke, 0:nb].
                                             for (size_t jj = 0; jj < nb; ++jj)
-                                                trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
-                                            // Look-ahead update.
+                                                trsm_col_solve(uplo, trans, diag, trsm_diag_window(A, k), bp + jj * M + k, ks);
                                             if (ke < M) {
-                                                // Build a tight sub-matrix for A[ke:M, k:ke].
+                                                // Build a tight sub-matrix for A[ke:M, k:ke] into the reused scratch buffer (rows_rem*ks <= M*kb always).
                                                 const size_t rows_rem = M - ke;
-                                                // Extract A panel into a temporary col-major buffer.
-                                                AlignedBuf a_panel(rows_rem * ks);
-                                                T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
+                                                T* LINALG_RESTRICT ap = ap_scratch;
                                                 for (size_t kk = 0; kk < ks; ++kk) {
                                                     LINALG_VECTORIZE
                                                     for (size_t ii = 0; ii < rows_rem; ++ii)
-                                                        ap[kk * rows_rem + ii] = static_cast<T>(A(ke + ii, k + kk));
+                                                        ap[kk * rows_rem + ii] = opA(ke + ii, k + kk);
                                                 };
                                                 gemm_direct<T, Layout::ColMajor>(T(-1),
                                                     ap, rows_rem, // A: rows_rem×ks, col-major lda=rows_rem
@@ -382,17 +563,15 @@ namespace linalg {
                                             const size_t ke = k;
                                             k = (ke > kb) ? ke - kb : 0;
                                             const size_t ks = ke - k;
-                                            // Solve bp[k:ke, 0:nb].
                                             for (size_t jj = 0; jj < nb; ++jj)
-                                                trsm_col_solve(uplo, trans, diag, A, bp + jj * M + k, ks);
-                                            // Update bp[0:k, 0:nb] -= A[0:k, k:ke] * bp[k:ke, 0:nb].
+                                                trsm_col_solve(uplo, trans, diag, trsm_diag_window(A, k), bp + jj * M + k, ks);
                                             if (k > 0) {
-                                                AlignedBuf a_panel(k * ks);
-                                                T* LINALG_RESTRICT ap = detail::assume_aligned<64>(a_panel.data());
+                                                // k*ks <= M*kb always, so the reused scratch buffer is always large enough.
+                                                T* LINALG_RESTRICT ap = ap_scratch;
                                                 for (size_t kk = 0; kk < ks; ++kk) {
                                                     LINALG_VECTORIZE
                                                     for (size_t ii = 0; ii < k; ++ii)
-                                                        ap[kk * k + ii] = static_cast<T>(A(ii, k + kk));
+                                                        ap[kk * k + ii] = opA(ii, k + kk);
                                                 };
                                                 gemm_direct<T, Layout::ColMajor>(T(-1),
                                                     ap, k, // A: k*ks col-major lda=k
@@ -521,47 +700,45 @@ namespace linalg {
             LINALG_INLINE void syrk_core(char uplo, T alpha, const T* ap, size_t lda, size_t N, size_t K, bool notrans, bool conjugate, T* cp, size_t ldc) {
                 const bool upper = (uplo == 'U' || uplo == 'u');
                 const size_t bs = L1_BLOCK * 2;
-                // Element of A at logical outer-product index (vec, k).
-                // notrans -> row  vec of A: A(vec, k)
-                // trans -> col  vec of A: A(k, vec)
-                // ColMajor + trans: physical A[k,i] = ap[i*lda + k]
-
-                const bool conj_fill = conjugate && !notrans; // For syrk (conjugate=false), trans means A^T not A^H, so no conjugation.
+                const bool conj_fill = conjugate && !notrans;
+                const bool already_packed = (K == 0) || (lda == K && ((L == Layout::RowMajor && notrans) || (L == Layout::ColMajor && !notrans && !conj_fill)));
                 using AlignedBuf = std::vector<T, AlignedAllocator<T>>;
-                AlignedBuf A_buf(N * K);
-                T* LINALG_RESTRICT Ab = detail::assume_aligned<64>(A_buf.data());
-                // Fill Ab[i*K + k] = logical_A(i, k)
-                // RowMajor + notrans: physical A[i,k] = ap[i*lda + k]
-                // RowMajor + trans: physical A[k,i] = ap[k*lda + i]
-                // ColMajor + notrans: physical A[i,k] = ap[k*lda + i]
-                // ColMajor + trans: physical A[k,i] = ap[i*lda + k]
-                parallel_for(N, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (K + 1)),
-                    [=](size_t rs, size_t re) {
-                        for (size_t i = rs; i < re; ++i) {
-                            T* LINALG_RESTRICT dst = Ab + i * K;
-                            if constexpr (L == Layout::RowMajor) {
-                                if (notrans) {
-                                    const T* src = ap + i * lda;
-                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
-                                } else {
-                                    if (conj_fill) {
-                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[k * lda + i]);
-                                    } else LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
-                                };
-                            } else {
-                                if (notrans) {
-                                    LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
-                                } else {
-                                    if (conj_fill) {
-                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[i * lda + k]);
-                                    } else {
+                AlignedBuf A_buf;
+                const T* Ab;
+                if (already_packed) {
+                    Ab = detail::assume_aligned<64>(ap);
+                } else {
+                    A_buf.resize(N * K);
+                    T* LINALG_RESTRICT Ab_fill = detail::assume_aligned<64>(A_buf.data());
+                    parallel_for(N, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (K + 1)),
+                        [=](size_t rs, size_t re) {
+                            for (size_t i = rs; i < re; ++i) {
+                                T* LINALG_RESTRICT dst = Ab_fill + i * K;
+                                if constexpr (L == Layout::RowMajor) {
+                                    if (notrans) {
                                         const T* src = ap + i * lda;
                                         LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                    } else {
+                                        if (conj_fill) {
+                                            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[k * lda + i]);
+                                        } else LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+                                    };
+                                } else {
+                                    if (notrans) {
+                                        LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = ap[k * lda + i];
+                                    } else {
+                                        if (conj_fill) {
+                                            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = conj(ap[i * lda + k]);
+                                        } else {
+                                            const T* src = ap + i * lda;
+                                            LINALG_VECTORIZE for (size_t k = 0; k < K; ++k) dst[k] = src[k];
+                                        };
                                     };
                                 };
                             };
-                        };
-                    });
+                        });
+                    Ab = Ab_fill;
+                };
                 // Blocked outer loop over i-tiles; parallelised at tile level.
                 const size_t n_itiles = (N + bs - 1) / bs;
                 parallel_for(n_itiles, 1, [=, &A_buf](size_t tis, size_t tie) {
@@ -624,10 +801,11 @@ namespace linalg {
             const bool notrans = (trans == 'N' || trans == 'n');
             const size_t K = notrans ? A_expr.self().cols() : A_expr.self().rows();
             auto a_info = raw_mat_info<T>(A_expr);
+            const bool usable = a_info.has_value() && a_info->layout == L && !a_info->conj;
             Matrix<T, L> A_tmp;
-            if (!a_info) A_tmp = materialise<T, L>(A_expr);
-            const T* ap  = a_info ? a_info->data : A_tmp.data();
-            size_t lda = a_info ? a_info->lda : A_tmp.stride();
+            if (!usable) A_tmp = materialise<T, L>(A_expr);
+            const T* ap  = usable ? a_info->data : A_tmp.data();
+            size_t lda = usable ? a_info->lda : A_tmp.stride();
             scale_triangle<T, L>(uplo, beta, cp, ldc, N);
             if (alpha == T(0) || K == 0) return;
             kernels::syrk_core<T, L>(uplo, alpha, ap, lda, N, K, notrans, conjugate, cp, ldc);
