@@ -136,8 +136,8 @@ auto A = Matrix<double>::zeros(42, 100);
 auto A = Matrix<double>::ones(100, 42);
 
 // Accessors.
-A(i, j); // Unchecked
-A.at(i, j); // checked indexation.
+A(i, j);    // Unchecked
+A.at(i, j); // Checked indexation.
 A.rows();  A.cols();  A.stride();  A.data();
 
 A.reshape(new_rows, new_cols); // Total element count must be unchanged: rows * cols = new_rows * new_cols.
@@ -162,12 +162,12 @@ The tables below summarise possible expression uses.
 Other operations, supported by the expression infrastructure.
 | Operation | Expression | Notes |
 | --- | --- | --- | 
-| Matrix-vector product | `A * v` | cf. optimised `gemv` |
-| Vector-matrix product | `v * A` |
+| Matrix-vector product | `A * v` | cf. optimised `gemv`. |
+| Vector-matrix product | `v * A` | cf. BLAS `vgem`. |
 | Upper triangle extraction | `triu(A, k)` | k-offset from main diagonal, default is 0. |
 | Lower triangle extraction | `tril(A, k)` | k-offset, default is 0. |
 
-*Note:* the lazy `A * B` operator in expression templates does an element-by-element reduction on demand. For large matrices it is recommended to use the optimised [`gemm` BLAS](/reference/BLAS.md#gemm-general-matrix-matrix-product) call instead.
+*Note:* for large matrices (or chained multiply-add expressions) it is recommended to use the optimised [`gemm`](/reference/BLAS.md#gemm-general-matrix-matrix-product) BLAS call directly.
 ### Wrapping in expressions
 Optionally use `expr()` to wrap a storage object so it participates expression algebra:
 ```cpp
@@ -179,15 +179,15 @@ Vector<double> v = expr(A) * expr(b) + expr(c); // Enforces lazy evaluation.
 The library supports a substantial quantity of common mathematical functions, defined in the [C++ numerics library](https://en.cppreference.com/cpp/numeric). The functions are separated from `std` in `linalg` namespace, just as all other library assets.
 | Function class | Present in `linalg` | Notes |
 | --- | --- | --- |
-| Arithmetic | `abs`, `pow`, `sqrt`, `exp`, `log` | Functions are "inherited" from the standard C++, and applied pointwise. |
+| Arithmetic | `abs`, `pow`, `sqrt`, `exp`, `log` | Functions are "inherited" from the standard C++, and are applied pointwise. |
 | Nearest integer | `floor`, `ceil`, `round` |
-| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imag part extraction when assigned. |
+| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imaginary part extraction when assigned. |
 | Trigonometric | `sin`, `asin`, `cos`, `acos`, `tan`, `atan` |
 | Hyperbolic | `sinh`, `cosh`, `tanh`|
-| Reductions | Common: `sum`. Vector-specific: `dot`, `dotc` | cf. optimised BLAS `asum` for vectors. |
+| Reductions | Common: `sum`. Vector-specific: `dot`, `dotc` | cf. optimised [BLAS `asum`](#blas) for vectors. |
 | Statistics | `mean`, `variance`, `stddev` |
 
-User-defined utilties can be constructed using `UnaryMatExpr` or `UnaryVecExpr`.
+*Note:* user-defined utilties can be constructed using `UnaryMatExpr` or `UnaryVecExpr`.
 ### Construction-specific
 Some useful utilities exist to construct structured vectors and matrices. Illustration below:
 ```cpp
@@ -235,7 +235,7 @@ The existing routines follow standard 3-level convention:
 | Level | Meaning | Present in `linalg` | Notes |
 | --- | --- | --- | --- |
 | BLAS-1 | Vector operations | `axpy`, `axpby`, `scal`, `copy`, `swap`, `iamax`, `iamin`, `asum`, `dot`, `dotc`, `nrm2`, `rotg`, `rot` | There exist matrix overloads for `scal`, `copy`. |
-| BLAS-2 | Matrix-vector operations | `gemv`, `ger`, `gerc`, `trsv`, `trmv`, `symv`, `hemv` | `trsm` is inherently serial. |
+| BLAS-2 | Matrix-vector operations | `gemv`, `vgem`, `ger`, `gerc`, `trsv`, `trmv`, `symv`, `hemv` | `trsv` is inherently serial. |
 | BLAS-3 | Matrix-matrix operations | `gemm`, `trsm`, `syrk`, `herk` |
 
 *Note:* for in-depth coverage of BLAS cf. the [dedicated reference](reference/BLAS.md).
@@ -323,7 +323,7 @@ res.pivoted // true if pivoting was enabled.
 
 ---
 ### Schur decomposition
-Performs Schur decomposition of a complex-valued matrix $A = Q T Q^H$, where the columns of unitary matrix $Q$ are the Schur vectors, and the diagonal of $T$ contains eigenvalues of the original matrix. A detailed discussion of the algorithm is provided [here](/reference/SCHUR.md).
+Performs Schur decomposition of a complex-valued matrix $A = Q T Q^H$, where the columns of unitary matrix $Q$ are the Schur vectors, and the diagonal of $T$ contains (complex) eigenvalues of the original matrix. A detailed discussion of the algorithm is provided [here](/reference/SCHUR.md).
 ```cpp
 auto res = schur(A, /*compute_vectors=*/true, /*balance=*/true);
 

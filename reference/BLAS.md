@@ -63,6 +63,8 @@ This cap ensures every thread always receives at least `threshold` elements of w
 T result = parallel_reduce<T>(total, threshold, [](size_t i) -> T { return f(i); }); // Per-element interface.
  
 T result = parallel_reduce_chunks<T>(total, threshold, [](size_t s, size_t e) -> T { return g(s, e); }); // Chunk interface.
+
+T result = parallel_reduce_assoc<T>(total, threshold, identity, [](size_t j) -> T { return h(j); }, [](T a, T b) { return combine(a, b); }); // Associative reductions.
 ```
 
 A reduction requires threads to combine results into a single scalar. Accumulation into a shared variable requires atomic operations which inhibit vectorisation and generate cache-coherence traffic. The library uses a **private partial-sum pattern** instead:
@@ -254,7 +256,7 @@ size_t idx = iamax(expr(x)); // Index of largest |x_i|.
 size_t idx = iamin(expr(x)); // Index of smallest |x_i|.
 ```
 
-Sequential linear scan with no parallelism. Two reasons justify this: (a) the operation is bandwidth-limited with minimal arithmetic work, so parallel speedup is marginal; (b) BLAS specifies that `iamax` returns the *first* index of the maximum in the event of ties. A parallel max-index scan cannot guarantee this without a second pass.
+Sequential linear scan with no parallelism for vectors with length less than `PARALLEL_THRESHOLD_REDUCE`, as the operation is bandwidth-limited with minimal arithmetic work. A parallel max-index scan is involved for larger vectors.
 
 ---
 ### `copy` and `swap`
@@ -263,7 +265,9 @@ copy(expr(x), y); copy(expr(A), B);
 swap(x, y);
 ```
 
-`copy` delegates to the assignment operator of the destination type, which already contains aliasing detection and parallel fill. `swap` uses `parallel_for` with `std::swap(x[i], y[i])` in the body; the three-register swap requires no extra allocation.
+`copy` delegates either to `std::memcpy` (for contiguous data and unit-stride views) or to the assignment operator of the destination type, which already contains aliasing detection and parallel fill.
+
+`swap`, similarly uses `std::swap` or `parallel_for` with `std::swap(x[i], y[i])` in the body; the three-register swap requires no extra allocation.
 
 ---
 ### Givens rotations
@@ -319,7 +323,7 @@ Two reads and two writes per element, two FMA pairs per iteration. The complex o
 ## Level 2: matrix-vector operations
 
 Level 2 routines perform $O(MN)$ arithmetic with $O(MN)$ memory traffic - arithmetic intensity close to 1 op/byte for double. They are bandwidth-bound for large matrices. The central engineering concerns are cache-line-friendly access order, selecting the correct parallelism axis for the storage layout, and avoiding extra passes over large working sets.
-- [`gemv`](#gemv-general-matrix-vector-multiply)
+- [`gemv` / `vgem`](#gemv-and-vgem-general-matrix-vector-multiplication)
 - [`trsv`](#trsv-single-rhs-triangular-solve)
 - [`trmv`](#trmv-triangular-matrix-vector-product)
 - [`ger` / `gerc`](#ger-and-gerc-rank-1-updates)
@@ -331,17 +335,38 @@ Level 2 routines perform $O(MN)$ arithmetic with $O(MN)$ memory traffic - arithm
 Level 2 introduces a unified helper `detail::resolve_vec<T>(expr, tmp)`, which either recovers a raw pointer plus stride via `raw_vec_ptr`, or materialises the expression into `tmp` and returns `{tmp.data(), 1}`. This replaces *ad hoc* materialisation scattered across callers, ensuring all Level 2 routines handle strided views and arbitrary expressions consistently.
 
 ---
-### `gemv`: general matrix-vector multiply
+### `gemv` and `vgem`: general matrix-vector multiplication
 ```cpp
 // y = alpha * A * x + beta * y, A is M * N matrix.
 gemv(alpha, expr(A), expr(x), beta, y);
 gemv<double, Layout::ColMajor>(alpha, expr(A), expr(x), beta, y);
+
+// y = x^T * A.
+vgem(expr(x), expr(A), y); // x is treated as a row-vector.
 ```
  
-**Operation:** $y \leftarrow \alpha A x + \beta y$.
+**Operation:** $y \leftarrow \alpha A x + \beta y$ (or $y \leftarrow x^T A + y$).
 
-**Dispatch:** `gemv_impl` operates in two stages. First, `resolve_vec<T>` obtains `(x_ptr, incx)`; a non-unit stride is handled explicitly in the kernel, avoiding materialisation for the common case of column-views. Second, `raw_mat_info<T>` attempts to extract `(data*, lda, Layout)` from the matrix expression; on failure the expression is materialised into a temporary `Matrix<T, L>`. Kernel dispatch follows from `a_info->layout`.
+**Dispatch:** `gemv_impl` operates in two stages. First, `resolve_vec<T>` obtains `(x_ptr, incx)`; a non-unit stride is handled explicitly in the kernel, avoiding materialisation for the common case of column-views. Second, `raw_mat_info<T>` attempts to extract `(data*, lda, Layout)` from the matrix expression; on failure the expression is materialised into a temporary `Matrix<T, L>`. Kernel dispatch follows from `a_info->layout`. `vgem` operates similarly, and, being simpler, is implemented as a standalone parallelised loop:
+```cpp
+parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t js, size_t je) {
+    for (size_t j = js; j < je; ++j) {
+        T acc = T(0);
+        if (layout == Layout::RowMajor) {
+            // Column j is strided (stride = lda) under RowMajor physical storage.
+            for (size_t i = 0; i < M; ++i) acc += Ap[i * lda + j] * xp[i];
+        } else {
+            // Column j is contiguous under ColMajor physical storage.
+            const T* LINALG_RESTRICT col = Ap + j * lda;
+            LINALG_VECTORIZE
+            for (size_t i = 0; i < M; ++i) acc += col[i] * xp[i];
+        };
+        yp[j] = acc;
+    };
+});
+```
 
+We shall consider `gemv` implementation in greater detail:
 - Row-major kernel
 ```cpp
 parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
@@ -399,7 +424,7 @@ trsv('U', 'C', 'N', expr(A), x); // Upper conjugate-transpose.
  
     All contributions to $x_j$ from already-resolved $x_{0 \ldots j-1}$ must be **gathered** before the diagonal division.
 
-    * **Lower transposed — backward gather.** For each $i$ from $N{-}1$ down to $0$:
+    * **Lower transposed - backward gather.** For each $i$ from $N{-}1$ down to $0$:
  
     $$x_i = \frac{x_i - \sum_{k > i} A_{ki} x_k}{A_{ii}}$$
 
@@ -491,7 +516,7 @@ gerc(alpha, expr(x), expr(y), A); // A += alpha * x * conj(y)^T
 
 **Operations:** $A_{ij} \leftarrow A_{ij} + \alpha x_i y_j$ and $A_{ij} \leftarrow A_{ij} + \alpha x_i \overline{y_j}$ respectively.
 
-In the updated source, `ger` and `gerc` share a single `ger_kernel<T, L, Conj>` template. The `Conj` boolean is a **compile-time parameter**, eliminating the runtime branch or pre-conjugation pass that appeared in the previous version. The inner loop of the RowMajor path reads:
+`ger` and `gerc` share a single `ger_kernel<T, L, Conj>` template. The `Conj` boolean is a **compile-time parameter**, eliminating the runtime branch or pre-conjugation pass that appeared in the previous version. The inner loop of the RowMajor path reads:
  
 ```cpp
 if constexpr (Conj) {
@@ -616,6 +641,8 @@ for (size_t i = i0; i < i1; ++i) {
 For each $(i, k)$ pair, `a_ik` is a broadcast scalar and `b_row` is a contiguous row - optimal access for RowMajor $B$. The 8 independent `c_row[j..j+7] +=` statements form 8 independent FMA chains that the out-of-order scheduler overlaps. On AVX2 (256-bit, 4 doubles), the compiler groups these into two 4-wide SIMD FMAs, saturating both FP execution ports.
  
 - **Column-major microkernel** (dual structure, $j \to k \to i$): hoists `b_kj = alpha * b_col[k]` per $(j, k)$ pair, then performs an 8-wide unroll over $i$ into a contiguous column of $C$.
+
+*Note:* there exists a group of complex-specific kernels that perform in-flow conjugation rather than materialising `hermitian(A)`-like expressions.
 
 **Blocked algorithm**
 
