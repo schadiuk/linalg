@@ -1,5 +1,9 @@
 #pragma once
 
+#include <linalg/storage/vector.hpp>
+#include <linalg/storage/vector_view.hpp>
+#include <linalg/core/hints.hpp>
+#include <linalg/core/error.hpp>
 #include <linalg/expressions/expr_base.hpp>
 
 namespace linalg {
@@ -10,11 +14,14 @@ namespace linalg {
         /// @brief Internal object reference.
         const Vector<T>& vec;
 
+        /// @brief Elementwise-classification opt-in: see `MatRef` in matrix_expr.hpp.
+        static constexpr bool is_elementwise = true;
+
         /// @brief Constructor from reference.
         /// @param v The reference to be assigned.
-        explicit VecRef(const Vector<T>& v) : vec(v) {};
+        explicit VecRef(const Vector<T>& v) noexcept : vec(v) {};
 
-        size_t size() const { return vec.size(); };
+        size_t size() const noexcept { return vec.size(); };
 
         /// @brief Element indexation.
         /// @param i The index.
@@ -26,7 +33,7 @@ namespace linalg {
 		/// @param p Wildcard pointer.
 		/// @param bytes 
 		/// @return Boolean indicator.
-        bool depends_on(const void* p, size_t bytes) const { return vec.depends_on(p, bytes); };
+        bool depends_on(const void* p, size_t bytes) const noexcept { return vec.depends_on(p, bytes); };
     };
 
     /// @brief Structure responsible for vector view support.
@@ -34,12 +41,17 @@ namespace linalg {
     /// @tparam Mutable Mutability flag.
     template<typename T, bool Mutable = false> 
     struct VecViewRef : VecExpr<VecViewRef<T, Mutable>> { // Mutable = true preserves write-back capability when the wrapper is used as an assignment target
-        /// @brief Storage of the view.
-        VectorView<T, Mutable>& view;
+        /// @brief Storage of the view (by value: VectorView is a cheap pointer+size+stride
+        /// wrapper, and storing it by reference here would not even compile for the const-view
+        /// expr() overload below, since VectorView<T,Mutable>& cannot bind to a const argument).
+        VectorView<T, Mutable> view;
+
+        /// @brief Elementwise-classification opt-in: see `MatRef` in matrix_expr.hpp.
+        static constexpr bool is_elementwise = true;
 
         /// @brief Constructor from a given view.
         /// @param v The view.
-        explicit VecViewRef(const VectorView<T, Mutable>& v) : view(v) {};
+        explicit VecViewRef(const VectorView<T, Mutable>& v) noexcept : view(v) {};
 
         /// @brief Conversion operator.
         /// @note Implicit narrowing: a mutable wrapper can be used wherever a const one is expected.
@@ -47,7 +59,7 @@ namespace linalg {
             return VecViewRef<T, false>(static_cast<const VectorView<T, false>&>(view));
         };
 
-        size_t size() const { return view.size(); };
+        size_t size() const noexcept { return view.size(); };
 
         /// @brief Unchecked, read-only element access.
         /// @param i Index.
@@ -66,7 +78,7 @@ namespace linalg {
 		/// @param p Wildcard pointer.
 		/// @param bytes 
 		/// @return Boolean indicator.
-        bool depends_on(const void* p, size_t bytes) const { return view.depends_on(p, bytes); };
+        bool depends_on(const void* p, size_t bytes) const noexcept { return view.depends_on(p, bytes); };
     };
 
     /// @brief Vector addition expresion.
@@ -74,8 +86,10 @@ namespace linalg {
     /// @tparam E2 Right operand type (that of `e2`).
     template<typename E1, typename E2>
     struct VecAddExpr : VecExpr<VecAddExpr<E1, E2>> {
-        const E1& e1;
-        const E2& e2;
+        detail::operand_t<E1> e1;
+        detail::operand_t<E2> e2;
+
+        static constexpr bool is_elementwise = true;
 
         VecAddExpr(const E1& a, const E2& b) : e1(a), e2(b) { BOUNDS_CHECK(a.size() == b.size()); };
 
@@ -99,8 +113,10 @@ namespace linalg {
     /// @tparam E2 Right operand type (that of `e2`).
     template<typename E1, typename E2>
     struct VecSubExpr : VecExpr<VecSubExpr<E1, E2>> {
-        const E1& e1;
-        const E2& e2;
+        detail::operand_t<E1> e1;
+        detail::operand_t<E2> e2;
+
+        static constexpr bool is_elementwise = true;
 
         VecSubExpr(const E1& a, const E2& b) : e1(a), e2(b) { BOUNDS_CHECK(a.size() == b.size()); };
 
@@ -125,8 +141,10 @@ namespace linalg {
     /// @tparam E2 Right operand type (that of `e2`). 
     template<typename E1, typename E2>
     struct VecMulExpr : VecExpr<VecMulExpr<E1, E2>> {
-        const E1& e1;
-        const E2& e2;
+        detail::operand_t<E1> e1;
+        detail::operand_t<E2> e2;
+
+        static constexpr bool is_elementwise = true;
 
         VecMulExpr(const E1& a, const E2& b) : e1(a), e2(b) { BOUNDS_CHECK(a.size() == b.size()); };
 
@@ -150,8 +168,10 @@ namespace linalg {
     /// @tparam E2 Right operand type (that of `e2`).
     template<typename E1, typename E2>
     struct VecDivExpr : VecExpr<VecDivExpr<E1, E2>> {
-        const E1& e1;
-        const E2& e2;
+        detail::operand_t<E1> e1;
+        detail::operand_t<E2> e2;
+
+        static constexpr bool is_elementwise = true;
 
         VecDivExpr(const E1& a, const E2& b) : e1(a), e2(b) { BOUNDS_CHECK(a.size() == b.size()); };
 
@@ -176,7 +196,9 @@ namespace linalg {
     template<typename S, typename E>
     struct ScVecMulExpr : VecExpr<ScVecMulExpr<S, E>> {
         S scalar;
-        const E& expr;
+        detail::operand_t<E> expr;
+
+        static constexpr bool is_elementwise = true;
 
         ScVecMulExpr(S s, const E& e) : scalar(s), expr(e) {};
 
@@ -201,8 +223,11 @@ namespace linalg {
     /// @note Evaluates `Mat * Vec` product with vector as a column.
     template<typename EM, typename EV>
     struct GemvExpr : VecExpr<GemvExpr<EM, EV>> {
-        const EM& mat;
-        const EV& vec;
+        detail::operand_t<EM> mat;
+        detail::operand_t<EV> vec;
+
+        // NOT elementwise: each output entry reduces over an entire row of `mat`.
+        static constexpr bool is_elementwise = false;
 
         GemvExpr(const EM& m, const EV& v) : mat(m), vec(v) { BOUNDS_CHECK(mat.cols() == v.size()); };
 
@@ -232,7 +257,9 @@ namespace linalg {
     template<typename S, typename E> requires Scalar<S>
     struct ScVecDiv : VecExpr<ScVecDiv<S, E>> {
         S scalar;
-        const E& expr;
+        detail::operand_t<E> expr;
+
+        static constexpr bool is_elementwise = true;
 
         ScVecDiv(S s, const E& e) : scalar(s), expr(e) {};
 
@@ -267,7 +294,9 @@ namespace linalg {
     template<typename F, typename E>
     struct UnaryVecExpr : VecExpr<UnaryVecExpr<F, E>> {
         F func;
-        const E& expr;
+        detail::operand_t<E> expr;
+
+        static constexpr bool is_elementwise = true;
 
         UnaryVecExpr(F f, const E& e) : func(f), expr(e) {};
 
@@ -292,8 +321,11 @@ namespace linalg {
     /// @note Evaluates `Vec * Mat` product with vector as a row.
     template<typename EV, typename EM>
     struct VgemExpr : VecExpr<VgemExpr<EV, EM>> {
-        const EV& vec;
-        const EM& mat;
+        detail::operand_t<EV> vec;
+        detail::operand_t<EM> mat;
+
+        // NOT elementwise: each output entry reduces over an entire column of `mat`.
+        static constexpr bool is_elementwise = false;
 
         VgemExpr(const EV& v, const EM& m) : vec(v), mat(m) { BOUNDS_CHECK(vec.size() == m.rows()); };
 
@@ -360,15 +392,15 @@ namespace linalg {
     // expr() wrapper
     template<typename T>
     VecRef<T> expr(const Vector<T>& vec) { return VecRef<T>(vec); };
- 
+
     // const view -> read-only expression wrapper
     template<typename T>
     VecViewRef<T, false> expr(const VectorView<T, false>& view) { return VecViewRef<T, false>(view); };
- 
+
     // Mutable view -> mutable expression wrapper (preserves write-back)
     template<typename T>
     VecViewRef<T, true> expr(VectorView<T, true>& view) { return VecViewRef<T, true>(view); };
- 
+
     // const-ref overload for mutable views when only reading is needed
     template<typename T>
     VecViewRef<T, false> expr(const VectorView<T, true>& view) {

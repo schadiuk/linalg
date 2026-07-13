@@ -61,10 +61,10 @@ namespace linalg {
     #endif
 
     namespace detail {
-        /// @brief Informs the optimiter that pointer starts on an N-byte boundary.
+        /// @brief Informs the optimiser that pointer starts on an N-byte boundary.
         template<std::size_t N, typename T>
         LINALG_INLINE T* assume_aligned(T* p) noexcept {
-            #if defined(__cpp_lib_assume_aligned)          // C++20 §20.10.6
+            #if defined(__cpp_lib_assume_aligned)
                 return std::assume_aligned<N>(p);
             #elif defined(LINALG_CLANG) || defined(LINALG_GCC)
                 return static_cast<T*>(__builtin_assume_aligned(p, N));
@@ -76,7 +76,7 @@ namespace linalg {
             #endif
         };
         
-        /// @brief Informs the optimiter that pointer starts on an N-byte boundary.
+        /// @brief Informs the optimiser that pointer starts on an N-byte boundary.
         template<std::size_t N, typename T>
         LINALG_INLINE const T* assume_aligned(const T* p) noexcept {
             #if defined(__cpp_lib_assume_aligned)
@@ -100,7 +100,7 @@ namespace linalg {
         #elif defined(__SSE2__) || defined(__ARM_NEON)
         inline constexpr std::size_t simd_bytes = 16;
         #else
-        inline constexpr std::size_t simd_bytes = 8;   // scalar / unknown arch
+        inline constexpr std::size_t simd_bytes = 8;   // Scalar / unknown architecture.
         #endif
         
         /// @brief Elements per SIMD register for scalar type T.
@@ -112,6 +112,16 @@ namespace linalg {
         /// @tparam T Scalar type.
         template<typename T>
         inline constexpr std::size_t unroll_factor = std::max<std::size_t>(4u, 2u * simd_lanes<T>);
+
+        // Elementwise expression classifiers:
+        template<typename E, typename V = void>
+        struct expr_is_elementwise : std::false_type {};
+
+        template<typename E>
+        struct expr_is_elementwise<E, std::void_t<decltype(E::is_elementwise)>> : std::bool_constant<E::is_elementwise> {};
+
+        template<typename E>
+        inline constexpr bool expr_is_elementwise_v = expr_is_elementwise<E>::value;
     };
 
     /// @brief Replacement for std::allocator<T>. Every allocation starts on an Align-byte boundary. Default 64 B is one cache line, equivalent to widest AVX-512 store.
@@ -119,8 +129,8 @@ namespace linalg {
     /// @tparam Align 
     template<typename T, std::size_t Align = 64>
     struct AlignedAllocator {
-        static_assert((Align & (Align - 1)) == 0, "Align must be a power-of-two");
-        static_assert(Align >= alignof(T), "Align must be >= alignof(T)");
+        static_assert((Align & (Align - 1)) == 0, "AlignedAllocator: Align must be a power-of-two.");
+        static_assert(Align >= alignof(T), "AlignedAllocator: Align must be >= alignof(T).");
     
         using value_type = T;
         using size_type = std::size_t;
@@ -138,8 +148,7 @@ namespace linalg {
     
         [[nodiscard]] T* allocate(std::size_t n) {
             if (n == 0) return nullptr;
-            return static_cast<T*>(
-                ::operator new(n * sizeof(T), std::align_val_t{Align}));
+            return static_cast<T*>(::operator new(n * sizeof(T), std::align_val_t{Align}));
         };
     
         void deallocate(T* p, std::size_t n) noexcept {
@@ -148,7 +157,37 @@ namespace linalg {
     };
     
     template<typename T, typename U, std::size_t A>
-    bool operator==(const AlignedAllocator<T,A>&, const AlignedAllocator<U,A>&) noexcept { return true;  };
+    bool operator==(const AlignedAllocator<T ,A>&, const AlignedAllocator<U, A>&) noexcept { return true; };
     template<typename T, typename U, std::size_t A>
-    bool operator!=(const AlignedAllocator<T,A>&, const AlignedAllocator<U,A>&) noexcept { return false; };
+    bool operator!=(const AlignedAllocator<T, A>&, const AlignedAllocator<U, A>&) noexcept { return false; };
+ 
+    /// @brief Aligned allocator identical to `AlignedAllocator`, except default-insertion (i.e. `construct(p)` with no arguments, as issued internally by `std::vector<T>(n)` / `resize(n)`) is a no-op that leaves the storage uninitialised rather than value-initialising it.
+    /// @tparam T Scalar type.
+    /// @tparam Align
+    /// @note Correctness contract: a `std::vector<T, UninitAlignedAllocator<T>>` sized via this path holds `n` slots of raw storage, not `n` live objects. The caller MUST placement-construct (`::new (ptr) T(...)`) every one of those `n` slots exactly once before any read, write-via-assignment, or destruction touches them.
+    /// This allocator exists solely to let `Vector`/`Matrix` construction do exactly one write pass over freshly allocated memory instead of two (a value-init pass followed by an overwrite pass).
+    template<typename T, std::size_t Align = 64>
+    struct UninitAlignedAllocator : AlignedAllocator<T, Align> {
+        using AlignedAllocator<T, Align>::AlignedAllocator;
+ 
+        template<typename U>
+        struct rebind { using other = UninitAlignedAllocator<U, Align>; };
+ 
+        /// @brief Default-insertion: intentionally does nothing, leaving `*p` uninitialised.
+        void construct(T*) const noexcept {};
+ 
+        /// @brief Value/copy/move-insertion: constructs normally via placement-new.
+        template<typename... Args>
+        void construct(T* p, Args&&... args) const {
+            ::new (static_cast<void*>(p)) T(std::forward<Args>(args)...);
+        };
+ 
+        /// @brief Destruction.
+        void destroy(T* p) const noexcept { p->~T(); };
+    };
+ 
+    template<typename T, typename U, std::size_t A>
+    bool operator==(const UninitAlignedAllocator<T, A>&, const UninitAlignedAllocator<U, A>&) noexcept { return true; };
+    template<typename T, typename U, std::size_t A>
+    bool operator!=(const UninitAlignedAllocator<T, A>&, const UninitAlignedAllocator<U, A>&) noexcept { return false; };
 };

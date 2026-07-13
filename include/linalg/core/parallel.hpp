@@ -202,4 +202,39 @@ namespace linalg {
         for (const auto& p : partials) result += p.value;
         return result;
     };
+
+    // Unlike `parallel_reduce` (which is hard-wired to `+=`), this allows arbitrary associative combiners.
+    template<typename T, typename F, typename Combine>
+    T parallel_reduce_assoc(size_t total, size_t threshold, T identity, F&& func, Combine&& combine) {
+        if (total == 0) return identity;
+        if (total < threshold) {
+            T acc = identity;
+            for (size_t i = 0; i < total; ++i) acc = combine(acc, func(i));
+            return acc;
+        };
+        auto& pool = ThreadPool::instance();
+        size_t num_threads = std::min(pool.thread_count(),
+            (total + threshold - 1) / threshold);
+        std::vector<Padded<T>> partials(num_threads, Padded<T>(identity));
+        std::vector<std::future<void>> futures;
+        futures.reserve(num_threads);
+        size_t chunk = total / num_threads;
+        size_t remainder = total % num_threads;
+        size_t offset = 0;
+        for (size_t t = 0; t < num_threads; ++t) {
+            const size_t count = chunk + (t < remainder ? 1 : 0);
+            const size_t start = offset;
+            futures.push_back(pool.enqueue(
+                [&func, &combine, &partials, identity, start, count, t]() {
+                    T acc = identity;
+                    for (size_t i = start; i < start + count; ++i) acc = combine(acc, func(i));
+                    partials[t].value = acc;
+                }));
+            offset += count;
+        };
+        for (auto& f : futures) f.get();
+        T result = identity;
+        for (const auto& p : partials) result = combine(result, p.value);
+        return result;
+    };
 };

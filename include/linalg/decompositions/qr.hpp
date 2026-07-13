@@ -168,8 +168,9 @@ namespace linalg {
     Matrix<T, L> piv_to_P(const Vector<size_t>& piv) {
         const size_t n = piv.size();
         Matrix<T, L> mat = Matrix<T, L>::zeros(n, n);
+        LINALG_VECTORIZE
         for (size_t j = 0; j < n; ++j) {
-            BOUNDS_CHECK(piv[j] < n);
+            // BOUNDS_CHECK(piv[j] < n);
             mat(piv[j], j) = T(1);
         };
         return mat;

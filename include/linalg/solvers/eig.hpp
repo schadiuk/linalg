@@ -179,7 +179,7 @@ namespace linalg {
     /// @param T_schur Complex upper-triangular Schur factor.
     /// @param Q_schur Complex unitary matrix of Schur vectors.
     /// @param right Compute right eigenvectors.
-    /// @param left Compute left eigenvectors
+    /// @param left Compute left eigenvectors.
     /// @return Corresponding `EigResult` structure.
     template<typename T, Layout LL>
     EigResult<T, LL>

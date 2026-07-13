@@ -2,8 +2,6 @@
 
 #include <linalg/blas/level3.hpp>
 
-constexpr size_t LU_BLOCK = 64;
-
 namespace linalg {
     // The structure bundles the publicly-visible decomposition (P, L, U) together with the internal packed representation used by the solvers.
     template<typename T, Layout LL>
@@ -14,6 +12,8 @@ namespace linalg {
         Matrix<T, LL> packed; // In-place storage: strict lower L, upper U.
         Vector<size_t> piv; // piv[j] = row swapped with row j at step j.
     };
+
+    constexpr size_t LU_BLOCK = 64;
 
     namespace detail {
         // Blocked LU with partial pivoting. Algorithm per block column k:

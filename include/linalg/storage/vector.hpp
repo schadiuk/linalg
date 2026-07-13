@@ -6,64 +6,59 @@
 #include <linalg/core/hints.hpp>
 
 namespace linalg {
-	// Forward declaration of expression template class
+	// Forward declarations
 	template<typename U> struct VecExpr;
+	template<typename EM, typename EV> struct GemvExpr;
+	template<typename EV, typename EM> struct VgemExpr;
 
 	/// @brief Main vector storage class.
 	/// @tparam T scalar element type. Supports: float, double, and their std::complex counterparts.
 	template<typename T = DefaultScalar> requires Scalar<T>
 	class Vector : public VecExpr<Vector<T>> {
+	private:
+		/// @brief Builds an `n`-slot buffer whose `i`-th slot is placement-constructed from `init_fn(i)`, in a single parallel write pass over freshly (uninitialised) allocated memory.
+		template<typename F>
+		static std::vector<T, UninitAlignedAllocator<T>> fill_construct(size_t n, F&& init_fn) {
+			std::vector<T, UninitAlignedAllocator<T>> buf(n);
+			T* LINALG_RESTRICT p = buf.data();
+			parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [p, &init_fn](size_t start, size_t end) {
+				for (size_t i = start; i < end; ++i) ::new (static_cast<void*>(p + i)) T(init_fn(i));
+			});
+			return buf;
+		};
+
 	public:
 		/// @brief Empty vector constructor.
 		/// @param n Size (length) parameter.
-		Vector(size_t n = 0) : data_(n), size_(n) {};
+		Vector(size_t n = 0) : data_(fill_construct(n, [](size_t) { return T(); })), size_(n) {};
 
 		/// @brief Constructor from initializer list.
 		/// @param init The list.
 		Vector(std::initializer_list<T> init) : data_(init), size_(init.size()) {};
 
-		Vector(size_t n, const T& val) : data_(), size_(n) {
-			data_.resize(n);
-			parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [this, val](size_t start, size_t end) {
-				for (size_t i = start; i < end; ++i) {
-					data_[i] = val;
-				};
-				});
-		};
+		/// @brief Uniform fill-in constructor.
+		/// @param n Size.
+		/// @param val Fill value.
+		Vector(size_t n, const T& val) : data_(fill_construct(n, [&val](size_t) { return val; })), size_(n) {};
 
 		/// @brief Constructor from a given `VecExpr`.
 		/// @tparam E CRTP-required parameter clause of expression.
 		/// @param expr The expression.
+		/// @note A freshly allocated buffer never aliases `expr`so this always constructs directly rather than going through the aliasing-aware `operator=` machinery.
 		template<typename E>
-		Vector(const VecExpr<E>& expr) : data_(expr.size()), size_(expr.size()) { *this = expr; };
+		Vector(const VecExpr<E>& expr) : data_(fill_construct(expr.size(), [&e = expr.self()](size_t i) { return static_cast<T>(e(i)); })), size_(expr.size()) {};
 
 		/// @brief Constructor from a given `VectorView` object.
 		/// @tparam Mutable Mutability indicator.
 		/// @param view The view.
 		template<bool Mutable>
-		Vector(const VectorView<T, Mutable>& view) : data_(view.size()), size_(view.size()) {
-			for (size_t i = 0; i < size_; ++i) {
-				data_[i] = view(i);
-			};
-		};
+		Vector(const VectorView<T, Mutable>& view) : data_(fill_construct(view.size(), [&view](size_t i) { return view(i); })), size_(view.size()) {};
 
 		/// @brief Constructor from a given `std::array` object.
 		/// @tparam n Size parameter deduced from the array.
 		/// @param arr The array.
 		template<size_t n>
-		Vector(const std::array<T, n>& arr) : data_(n), size_(n) {
-			if constexpr (n < PARALLEL_THRESHOLD_SIMPLE / 4) {
-				std::copy(arr.begin(), arr.end(), data_.begin());
-			}
-			else {
-				parallel_for(n, PARALLEL_THRESHOLD_SIMPLE,
-					[this, &arr](size_t start, size_t end) {
-						for (size_t i = start; i < end; ++i) {
-							data_[i] = arr[i];
-						};
-					});
-			};
-		};
+		Vector(const std::array<T, n>& arr) : data_(fill_construct(n, [&arr](size_t i) { return arr[i]; })), size_(n) {};
 
 		/// @brief Assignment operator from an expression.
 		/// @tparam E CRTP-required parameter clause.
@@ -75,21 +70,18 @@ namespace linalg {
 			BOUNDS_CHECK(size_ == e.size());
 			const void* data_ptr = data_.data();
 			const size_t data_bytes = size_ * sizeof(T);
-			bool depends = e.depends_on(data_ptr, data_bytes);
-			const size_t total = size_;
 
+			constexpr bool elementwise = detail::expr_is_elementwise_v<E>;
+			bool depends = !elementwise && e.depends_on(data_ptr, data_bytes);
+			const size_t total = size_;
+ 
 			if (total < PARALLEL_THRESHOLD_SIMPLE || depends) {
 				if (depends) {
-					std::vector<T, AlignedAllocator<T>> temp(total);
-					for (size_t i = 0; i < total; ++i) {
-						temp[i] = e(i);
-					};
-					data_ = std::move(temp);
+					// Build the replacement into a brand-new buffer (reads against the still-intact old `data_` happen entirely before the swap), then move it in.
+					data_ = fill_construct(total, [&e](size_t i) { return static_cast<T>(e(i)); });
 				}
 				else {
-					for (size_t i = 0; i < total; ++i) {
-						data_[i] = e(i);
-					};
+					for (size_t i = 0; i < total; ++i) data_[i] = e(i);
 				};
 			}
 			else {
@@ -112,6 +104,14 @@ namespace linalg {
 			const void* end = static_cast<const void*>(data_.data() + size_);
 			const void* other_end = static_cast<const char*>(p) + bytes;
 			return (p < end) && (other_end > start);
+		};
+
+		/// @brief O(1) member-wise swap: exchanges backing buffers/sizes rather than elements.
+		/// @param other Vector to swap contents with.
+		/// @note Both operands own independent, non-aliased heap buffers, so this is a pointer exchange regardless of length.
+		void swap(Vector<T>& other) noexcept {
+			data_.swap(other.data_);
+			std::swap(size_, other.size_);
 		};
 
 		size_t size() const { return size_; };
@@ -186,18 +186,27 @@ namespace linalg {
 		/// @param n Size.
 		/// @return The vector.
 		static Vector random(size_t n) {
-			Vector vec(n);
-			parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&vec](size_t start, size_t end) {
-				for (size_t i = start; i < end; ++i) {
-					vec.data_[i] = randomScalar<T>();
-				};
-				});
+			Vector vec;
+			vec.data_ = fill_construct(n, [](size_t) { return randomScalar<T>(); });
+			vec.size_ = n;
 			return vec;
 		};
 
+		template<typename EM, typename EV>
+		Vector(const GemvExpr<EM, EV>& expr);
+
+		template<typename EM, typename EV>
+		Vector<T>& operator=(const GemvExpr<EM, EV>& expr);
+ 
+		template<typename EV, typename EM>
+		Vector(const VgemExpr<EV, EM>& expr);
+
+		template<typename EV, typename EM>
+		Vector<T>& operator=(const VgemExpr<EV, EM>& expr);
+
 	private:
 	    // Data storage and dimension
-		std::vector<T, AlignedAllocator<T>> data_;
+		std::vector<T, UninitAlignedAllocator<T>> data_;
 		size_t size_;
 
         template<typename U, bool M> friend class VectorView;

@@ -1,5 +1,6 @@
 # pragma once
 
+#include <linalg/expressions/matrix_expr.hpp>
 #include <linalg/blas/level1.hpp>
 #include <optional>
 
@@ -32,7 +33,7 @@ namespace linalg {
 
         // Structure yielding a layout-aware raw-pointer descriptor for a matrix block.
         template<typename T>
-        struct MatInfo { const T* data; size_t lda; Layout layout; };
+        struct MatInfo { const T* data; size_t lda; Layout layout; bool conj = false; };
  
         // Fallback: any generic expression must be materialised.
         template<typename T, typename E>
@@ -60,18 +61,25 @@ namespace linalg {
             return MatInfo<T>{ v.data(), v.stride(), L };
         };
 
+        // Transposed, non-conjugated MatrixView (Mut = true or false): e.g. transpose(A).
+        template<typename T, Layout L, bool Mut>
+        LINALG_INLINE std::optional<MatInfo<T>> raw_mat_info(const MatExpr<MatViewExpr<T, L, true, false, Mut>>& e) {
+            const auto& v = e.self().view;
+            constexpr Layout flipped = (L == Layout::RowMajor) ? Layout::ColMajor : Layout::RowMajor;
+            return MatInfo<T>{ v.data(), v.stride(), flipped };
+        };
+
+        template<typename T, Layout L, bool Trans, bool Mut>
+        LINALG_INLINE std::optional<MatInfo<T>> raw_mat_info(const MatExpr<MatViewExpr<T, L, Trans, true, Mut>>& e) {
+            const auto& v = e.self().view;
+            constexpr Layout eff_layout = Trans ? (L == Layout::RowMajor ? Layout::ColMajor : Layout::RowMajor) : L;
+            return MatInfo<T>{ v.data(), v.stride(), eff_layout, /*conj=*/true };
+        };
+
         // Internal materialisation helper.
         template<typename T, typename EV>
         LINALG_INLINE Vector<T> materialise(const VecExpr<EV>& v) {
-            const auto& vv = v.self();
-            const size_t n = vv.size();
-            Vector<T> out(n);
-            T* LINALG_RESTRICT op = detail::assume_aligned<64>(out.data());
-            parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&vv, op](size_t s, size_t e) {
-                LINALG_VECTORIZE
-                for (size_t i = s; i < e; ++i) op[i] = static_cast<T>(vv(i));
-            });
-            return out;
+            return Vector<T>(v.self());
         };
 
         // Pointer resolution: use raw pointer if available, otherwise materialise. Returns {ptr, stride}.  When stride==1 the pointer is contiguous.
@@ -86,7 +94,7 @@ namespace linalg {
         // Namespace containing optimised kernels.
         namespace kernels {
             // Fused pointer-level gemv kernel for RowMajor layout.
-            template<typename T>
+            template<typename T, bool ConjA = false>
             LINALG_INLINE void gemv_kernel_row(T alpha, const T* LINALG_RESTRICT A, size_t lda, const T* x, size_t incx, T beta, T* LINALG_RESTRICT y, size_t M, size_t N) {
                 parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
                     for (size_t i = rs; i < re; ++i) {
@@ -94,17 +102,16 @@ namespace linalg {
                         T acc = T(0);
                         if (incx == 1) { // Unit-stride: vectorisable dot product.
                         LINALG_VECTORIZE
-                        for (size_t j = 0; j < N; ++j) acc += a_row[j] * x[j];
+                        for (size_t j = 0; j < N; ++j) acc += (ConjA ? conj(a_row[j]) : a_row[j]) * x[j];
                     } else {
-                        for (size_t j = 0; j < N; ++j) acc += a_row[j] * x[j * incx];
+                        for (size_t j = 0; j < N; ++j) acc += (ConjA ? conj(a_row[j]) : a_row[j]) * x[j * incx];
                     };
                     y[i] = (beta == T(0)) ? alpha * acc : alpha * acc + beta * y[i];
                 };
                 });
             };
 
-            // ColMajor kernel.
-            template<typename T>
+            template<typename T, bool ConjA = false>
             LINALG_INLINE void gemv_kernel_col(T alpha, const T* LINALG_RESTRICT A, size_t lda, const T* x, size_t incx, T beta, T* LINALG_RESTRICT y, size_t M, size_t N) {
                 if (beta == T(0)) std::fill(y, y + M, T(0)); // NaN does not affect zeroing.
                 else if (beta != T(1)) {
@@ -120,7 +127,7 @@ namespace linalg {
                         const T xj = alpha * x[j * incx];
                         if (xj == T(0)) continue;
                         const T* LINALG_RESTRICT a_col = A + j * lda;
-                        LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) y[i] += a_col[i] * xj;
+                        LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) y[i] += (ConjA ? conj(a_col[i]) : a_col[i]) * xj;
                     };
                     return;
                 };
@@ -136,7 +143,7 @@ namespace linalg {
                             const T xj = alpha * x[j * incx];
                             if (xj == T(0)) continue;
                             const T* LINALG_RESTRICT a_col = A + j * lda;
-                            LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) loc[i] += a_col[i] * xj;
+                            LINALG_VECTORIZE for (size_t i = 0; i < M; ++i) loc[i] += (ConjA ? conj(a_col[i]) : a_col[i]) * xj;
                         };
                     }));
                 };
@@ -159,6 +166,7 @@ namespace linalg {
                     parallel_for(M, PARALLEL_THRESHOLD_COMPUTE, [=](size_t rs, size_t re) {
                         for (size_t i = rs; i < re; ++i) {
                             const T xi = alpha * xa[i];
+                            if (xi == T(0)) continue;
                             T* LINALG_RESTRICT a_row = A_ptr + i * lda;
                             if constexpr (Conj) {
                                 LINALG_VECTORIZE
@@ -190,13 +198,20 @@ namespace linalg {
             auto [x_ptr, incx] = resolve_vec<T>(x_expr, x_tmp);
             auto a_info = raw_mat_info<T>(a_expr);
             if (a_info) {
-                if (a_info->layout == Layout::RowMajor)
-                    kernels::gemv_kernel_row(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
-                else
-                    kernels::gemv_kernel_col(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
+                if (!a_info->conj) {
+                    if (a_info->layout == Layout::RowMajor)
+                        kernels::gemv_kernel_row(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
+                    else
+                        kernels::gemv_kernel_col(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
+                } else {
+                    // Hermitian view resolved to a raw pointer: conjugate on load rather than materialising a full dense conjugated copy first.
+                    if (a_info->layout == Layout::RowMajor)
+                        kernels::gemv_kernel_row<T, true>(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
+                    else
+                        kernels::gemv_kernel_col<T, true>(alpha, a_info->data, a_info->lda, x_ptr, incx, beta, y_ptr, M, N);
+                };
             } else {
-                Matrix<T, L> A_tmp(M, N);
-                A_tmp = a_expr;
+                Matrix<T, L> A_tmp(a_expr.self());
                 if constexpr (L == Layout::RowMajor)
                     kernels::gemv_kernel_row(alpha, A_tmp.data(), A_tmp.stride(), x_ptr, incx, beta, y_ptr, M, N);
                 else
@@ -508,14 +523,15 @@ namespace linalg {
             const bool do_conj = (trans == 'C' || trans == 'c');
 
             auto a_info = raw_mat_info<T>(A_expr);
+            const bool a_usable = a_info.has_value() && !a_info->conj;
             Matrix<T, Layout::RowMajor> A_tmp;
             const T* Ap;
             size_t lda;
             Layout layout;
-            if (a_info) {
+            if (a_usable) {
                 Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
             } else {
-                A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+                A_tmp = Matrix<T, Layout::RowMajor>(A_expr.self());
                 Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
             };
  
@@ -712,12 +728,13 @@ namespace linalg {
         if (N == 0) return;
 
         auto a_info = detail::raw_mat_info<T>(A_expr);
+        const bool a_usable = a_info.has_value() && !a_info->conj;
         Matrix<T, Layout::RowMajor> A_tmp;
         const T* Ap; size_t lda; Layout layout;
-        if (a_info) {
+        if (a_usable) {
             Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
         } else {
-            A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+            A_tmp = Matrix<T, Layout::RowMajor>(A_expr.self());
             Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
         };
         Vector<T> xtmp;
@@ -749,12 +766,13 @@ namespace linalg {
         if (N == 0) return;
 
         auto a_info = detail::raw_mat_info<T>(A_expr);
+        const bool a_usable = a_info.has_value() && !a_info->conj;
         Matrix<T, Layout::RowMajor> A_tmp;
         const T* Ap; size_t lda; Layout layout;
-        if (a_info) {
+        if (a_usable) {
             Ap = a_info->data; lda = a_info->lda; layout = a_info->layout;
         } else {
-            A_tmp = Matrix<T, Layout::RowMajor>(A_expr);
+            A_tmp = Matrix<T, Layout::RowMajor>(A_expr.self());
             Ap = A_tmp.data(); lda = A_tmp.stride(); layout = Layout::RowMajor;
         };
  
@@ -769,5 +787,98 @@ namespace linalg {
             detail::kernels::symv_hemv_kernel<T, Layout::RowMajor, true>(alpha, Ap, lda, xp, beta, yp, N, upper);
         else
             detail::kernels::symv_hemv_kernel<T, Layout::ColMajor, true>(alpha, Ap, lda, xp, beta, yp, N, upper);
+    };
+
+    /// @brief Row-vector by matrix product.
+    /// @param x_expr Independent row-vector operand.
+    /// @param A_expr Matrix operand.
+    /// @param y Vector to be overwritten (via `y = x^T * A`).
+    template<typename T, typename EV, typename EM>
+    void vgem(const VecExpr<EV>& x_expr, const MatExpr<EM>& A_expr, Vector<T>& y) {
+        const size_t M = A_expr.self().rows();
+        const size_t N = A_expr.self().cols();
+        BOUNDS_CHECK(x_expr.self().size() == M && y.size() == N);
+        if (M == 0 || N == 0) return;
+        Vector<T> xtmp;
+        auto [xp, incx] = detail::resolve_vec<T>(x_expr, xtmp);
+        if (incx != 1) { xtmp = detail::materialise<T>(x_expr); xp = xtmp.data(); };
+
+        auto a_info = detail::raw_mat_info<T>(A_expr);
+        if (a_info && !a_info->conj) {
+            const T* LINALG_RESTRICT Ap = detail::assume_aligned<64>(a_info->data);
+            const size_t lda = a_info->lda;
+            const Layout layout = a_info->layout;
+            T* LINALG_RESTRICT yp = y.data();
+            parallel_for(N, PARALLEL_THRESHOLD_COMPUTE, [=](size_t js, size_t je) {
+                for (size_t j = js; j < je; ++j) {
+                    T acc = T(0);
+                    if (layout == Layout::RowMajor) {
+                        // Column j is strided (stride = lda) under RowMajor physical storage.
+                        for (size_t i = 0; i < M; ++i) acc += Ap[i * lda + j] * xp[i];
+                    } else {
+                        // Column j is contiguous under ColMajor physical storage.
+                        const T* LINALG_RESTRICT col = Ap + j * lda;
+                        LINALG_VECTORIZE
+                        for (size_t i = 0; i < M; ++i) acc += col[i] * xp[i];
+                    };
+                    yp[j] = acc;
+                };
+            });
+            return;
+        };
+
+        const auto& AA = A_expr.self();
+        T* LINALG_RESTRICT yp = y.data();
+        parallel_for(N, PARALLEL_THRESHOLD_SIMPLE, [=, &AA](size_t js, size_t je) {
+            for (size_t j = js; j < je; ++j) {
+                T acc = T(0);
+                for (size_t i = 0; i < M; ++i) acc += static_cast<T>(AA(i, j)) * xp[i];
+                yp[j] = acc;
+            };
+        });
+    };
+
+    template<typename T> requires Scalar<T>
+    template<typename EM, typename EV>
+    Vector<T>::Vector(const GemvExpr<EM, EV>& expr) : Vector(expr.size()) {
+        gemv(T(1), expr.mat, expr.vec, T(0), *this);
+    };
+
+    template<typename T> requires Scalar<T>
+    template<typename EM, typename EV>
+    Vector<T>& Vector<T>::operator=(const GemvExpr<EM, EV>& expr) {
+        BOUNDS_CHECK(size_ == expr.size());
+        const size_t bytes = size_ * sizeof(T);
+        const void* dst = static_cast<const void*>(data_.data());
+        if (expr.mat.depends_on(dst, bytes) || expr.vec.depends_on(dst, bytes)) {
+            Vector<T> tmp(size_);
+            gemv(T(1), expr.mat, expr.vec, T(0), tmp);
+            *this = std::move(tmp);
+        } else {
+            gemv(T(1), expr.mat, expr.vec, T(0), *this);
+        };
+        return *this;
+    };
+
+    template<typename T> requires Scalar<T>
+    template<typename EV, typename EM>
+    Vector<T>::Vector(const VgemExpr<EV, EM>& expr) : Vector(expr.size()) {
+        vgem(expr.vec, expr.mat, *this);
+    };
+
+    template<typename T> requires Scalar<T>
+    template<typename EV, typename EM>
+    Vector<T>& Vector<T>::operator=(const VgemExpr<EV, EM>& expr) {
+        BOUNDS_CHECK(size_ == expr.size());
+        const size_t bytes = size_ * sizeof(T);
+        const void* dst = static_cast<const void*>(data_.data());
+        if (expr.mat.depends_on(dst, bytes) || expr.vec.depends_on(dst, bytes)) {
+            Vector<T> tmp(size_);
+            vgem(expr.vec, expr.mat, tmp);
+            *this = std::move(tmp);
+        } else {
+            vgem(expr.vec, expr.mat, *this);
+        };
+        return *this;
     };
 };

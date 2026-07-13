@@ -1,4 +1,4 @@
-# pragma once
+#pragma once
 
 #include <linalg/operations/matrix_ops.hpp>
 
@@ -215,7 +215,7 @@ namespace linalg {
     /// @return `n * n` symmetric Hadamard matrix.
     template <typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> hadamard(size_t n) {
-        if (n == 0 || n & (n + 1) != 0) throw std::invalid_argument("hadamard: n must be a positve power of 2.");
+        if (n == 0 || (n & (n - 1)) != 0) throw std::invalid_argument("hadamard: n must be a positve power of 2.");
         Matrix<T, L> H(n, n, T(0));
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
             for (size_t i = rs; i < re; ++i)
@@ -337,10 +337,14 @@ namespace linalg {
             double lower = static_cast<double>(i + 1);
             double upper = static_cast<double>(n - i - 1);
             double v;
-            if (symmetric) v = std::sqrt(lower * upper);
-            else v = lower;
-            C(i, i + 1) = static_cast<T>(v);
-            C(i + 1, i) = static_cast<T>(v);
+            if (symmetric) {
+                const double v = std::sqrt(lower * upper);
+                C(i, i + 1) = static_cast<T>(v);
+                C(i + 1, i) = static_cast<T>(v);
+            } else {
+                C(i, i + 1) = static_cast<T>(lower);
+                C(i + 1, i) = static_cast<T>(upper);
+            };
         };
         return C;
     };
