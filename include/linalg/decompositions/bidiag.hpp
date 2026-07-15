@@ -50,5 +50,77 @@ namespace linalg {
                 };
             };
         };
+
+        template<typename T, Layout L>
+        BidiagResult<T, L> bidiag_tall(const Matrix<T, L>& A, bool accumulate_uv) {
+            const size_t m = A.rows(), n = A.cols();
+            const size_t k = n;
+            Matrix<t, L> W = A;
+            std::vector<Vector<T>> us(k);
+            std::vector<double> ubeta(k, 0.0);
+            std::vector<Vector<T>> vs(k > 0 ? k - 1 : 0);
+            std::vector<double> vbeta(k > 0 ? k - 1 : 0, 0.0);
+
+            for(size_t col = 0; col < k; ++col) {
+                const size_t len = m - col;
+                Vector<T> x(len);
+                for (size_t i = 0; i < len; ++i) x[i] = W(col + i, col);
+                auto [u, ubet] = householder_reflector(x);
+                us[col] = u; ubeta[col] = ubet;
+                apply_householder_left(W, u, ubet, col, len, n - col);
+                for (size_t i = col + 1; i < m; ++i) W(i, col) = T(0);
+
+                // Right reflector: zero W[col, col+2:n], acting on cols [col+1, n).
+                if (col + 1 < n) {
+                    const size_t rlen = n - (col + 1);
+                    Vector<T> y(rlen);
+                    for (size_t j = 0; j < rlen; ++j) y[j] = conj(W(col, col + 1 + j));
+                    auto [v, vbet] = householder_reflector(y);
+                    vs[col] = v; vbeta[col] = vbet;
+                    apply_householder_right(W, v, vbet, col + 1, rlen);
+                    for (size_t j = col + 2; j < n; ++j) W(col, j) = T(0);
+                };
+            };
+
+            BidiagResult<T, L> res;
+            std::vector<T> draw(k), eraw(k > 0 ? k - 1 : 0);
+            for (size_t i = 0; i < k; ++i) draw[i] = W(i, i);
+            for (size_t i = 0; i + 1 < k; ++i) eraw[i] = W(i, i + 1);
+
+            std::vector<T> dl, dr;
+            real_bidiag(draw, eraw, dl, dr);
+            res.d = Vector<double>(k);
+            for (size_t i = 0; i < k; ++i) res.d[i] = std::real(static_cast<T>(draw[i]));
+            res.e = Vector<double>(k > 0 ? k - 1 : 0);
+            for (size_t i = 0; i + 1 < k; ++i) res.e[i] = std::real(static_cast<T>(eraw[i]));
+
+            if (!accumulate_uv) return res;
+            // U accumulation: apply left reflectors in reverse order onto I_m (first k columns).
+            res.U = Matrix<T, L>(m, k, T(0));
+            for (size_t i = 0; i < k; ++i) res.U(i, i) = T(1);
+            for (size_t ci = k; ci-- > 0; ) {
+                if (ubeta[ci] == 0.0) continue;
+                const size_t len = m - ci;
+                const size_t ncols = k - ci;
+                apply_householder_left(res.U, us[ci], ubeta[ci], ci, len, ncols);
+            };
+            // V accumulation:
+            res.V = Matrix<T, L>(n, k, T(0));
+            for (size_t i = 0; i < k; ++i) res.V(i, i) = T(1);
+            for (size_t ci = 0; ci < vs.size(); ++ci) {
+                if (vbeta[ci] == 0.0) continue;
+                const size_t rlen = n - (ci + 1);
+                apply_householder_right(res.V, vs[ci], vbeta[ci], ci + 1, rlen);
+            };
+
+            // Fold the realizing phases in: `U <- U * D_L^H` (column `i` scaled by `conj(dl[i])`), `V <- V * D_R` (column `i` scaled by `dr[i]`).
+            if constexpr (is_complex_v<T>) {
+                std::vector<T> dl_conj(k);
+                for (size_t i = 0; i < k; ++i) dl_conj[i] = conj(dl[i]);
+                apply_col_phase(res.U, dl_conj);
+                apply_col_phase(res.V, dr);
+            };
+            return res;
+        };
     };
 };
