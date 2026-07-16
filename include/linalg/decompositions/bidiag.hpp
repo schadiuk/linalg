@@ -7,9 +7,9 @@ namespace linalg {
     template<typename T, Layout LL>
     struct BidiagResult {
         Matrix<T, LL> U;    // Left Householder product.
-        Vector<double> d;   // Main diagonal of `B`, length `k = (m, n)`.
+        Vector<double> d;   // Main diagonal of `B`, length `k = min(m, n)`.
         Vector<double> e;   // Superdiagonal of `B`, length `k - 1`.
-        Matrix<T, LL> V;    // Right Householder product.
+        Matrix<T, LL> V;    // Right Householder product (non-transposed).
     };
 
     namespace detail {
@@ -55,7 +55,7 @@ namespace linalg {
         BidiagResult<T, L> bidiag_tall(const Matrix<T, L>& A, bool accumulate_uv) {
             const size_t m = A.rows(), n = A.cols();
             const size_t k = n;
-            Matrix<t, L> W = A;
+            Matrix<T, L> W = A;
             std::vector<Vector<T>> us(k);
             std::vector<double> ubeta(k, 0.0);
             std::vector<Vector<T>> vs(k > 0 ? k - 1 : 0);
@@ -122,5 +122,40 @@ namespace linalg {
             };
             return res;
         };
+    };
+
+    /// @brief Unblocked Golub-Kahan bidiagonalisation: `A = U * B * V^H`, `B` real bidiagonal.
+    /// @param A Matrix to be decomposed.
+    /// @param accumulate_uv Householder products accumulation flag.
+    /// @return Corresponding `BidiagResult` structure.
+    /// @note Wide matrices (`n > m`) are handled by bidiagonalizing `A^H` (tall) and swapping the resulting `U`/`V`.
+    template<typename T, Layout L>
+    BidiagResult<T, L> bidiag(const Matrix<T, L>& A, bool accumulate_uv = true) {
+        const size_t m = A.rows(), n = A.cols();
+        if (m < n) {
+            Matrix<T, L> AH = hermitian(A);
+            auto sub = detail::bidiag_tall(AH, accumulate_uv);
+            const size_t k = sub.d.size();
+            BidiagResult<T, L> res;
+            res.d = Vector<double>(k);
+            for (size_t i = 0; i < k; ++i) res.d[i] = sub.d[k - 1 - i];
+            res.e = Vector<double>(k > 0 ? k - 1 : 0);
+            for (size_t i = 0; i + 1 < k; ++i) res.e[i] = sub.e[k - 2 - i];
+            if (accumulate_uv) {
+                res.U = Matrix<T, L>(sub.V.rows(), k);
+                for (size_t i = 0; i < sub.V.rows(); ++i)
+                    for (size_t j = 0; j < k; ++j) res.U(i, j) = sub.V(i, k - 1 - j);
+                res.V = Matrix<T, L>(sub.U.rows(), k);
+                for (size_t i = 0; i < sub.U.rows(); ++i)
+                    for (size_t j = 0; j < k; ++j) res.V(i, j) = sub.U(i, k - 1 - j);
+            };
+            return res;
+        };
+        return detail::bidiag_tall(A, accumulate_uv);
+    };
+
+    template<typename T, Layout L, typename E>
+    BidiagResult<T, L> bidiag(const MatExpr<E>& e, bool accumulate_uv = true) {
+        return bidiag(Matrix<T, L>(e), accumulate_uv);
     };
 };
