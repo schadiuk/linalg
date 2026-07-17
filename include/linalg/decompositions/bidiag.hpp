@@ -128,7 +128,7 @@ namespace linalg {
     /// @param A Matrix to be decomposed.
     /// @param accumulate_uv Householder products accumulation flag.
     /// @return Corresponding `BidiagResult` structure.
-    /// @note Wide matrices (`n > m`) are handled by bidiagonalizing `A^H` (tall) and swapping the resulting `U`/`V`.
+    /// @note Wide matrices (`n > m`) are handled by bidiagonalising `A^H` (tall) and swapping the resulting `U`/`V`.
     template<typename T, Layout L>
     BidiagResult<T, L> bidiag(const Matrix<T, L>& A, bool accumulate_uv = true) {
         const size_t m = A.rows(), n = A.cols();
