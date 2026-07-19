@@ -85,5 +85,204 @@ namespace linalg {
             };
             e[q - 1] = f;
         };
+
+        template<typename T, Layout L>
+        bool gkr_iteration(std::vector<double>& d, std::vector<double>& e, Matrix<T, L>& U, Matrix<T, L>& V, bool accumulate) {
+            const size_t n = d.size();
+            if (n <= 1) return true;
+            const double eps = std::numeric_limits<double>::epsilon();
+            size_t q = n - 1;
+            int since_deflation = 0;
+            while (q > 0) {
+                // Find largest p such that [p, q] is unreduced (no negligible superdiagonal).
+                size_t p = q;
+                while (p > 0) {
+                    const double tol = eps * (std::abs(d[p - 1]) + std::abs(d[p]));
+                    if (std::abs(e[p - 1]) <= tol) { e[p - 1] = 0.0; break; };
+                    --p;
+                };
+                if (p == q) { --q; since_deflation = 0; continue; };
+                // Zero-diagonal special case anywhere in the active window.
+                bool handled_zero = false;
+                for (size_t i = p; i < q; ++i) {
+                    const double dtol = eps * (std::abs(d[p]) + std::abs(d[q]) + 1.0);
+                    if (std::abs(d[i]) <= dtol) {
+                        chase_zero_diag(d, e, i, q, U, accumulate);
+                        handled_zero = true;
+                        break;
+                    };
+                };
+                if (handled_zero) { ++since_deflation; continue; };
+
+                const double mu = wilkinson_shift_bidiag((p + 1 <= q) ? d[q - 1] : d[p], e[q - 1], d[q]);
+                gkr_step(d, e, p, q, mu, U, V, accumulate, accumulate);
+                ++since_deflation;
+                const double tol = eps * (std::abs(d[q - 1]) + std::abs(d[q]));
+                if (std::abs(e[q - 1]) <= tol) { e[q - 1] = 0.0; --q; since_deflation = 0; };
+                if (since_deflation > static_cast<int>(q - p + 1) * MAX_ITER_PER_SVAL) return false;
+            };
+            return true;
+        };
+
+        template<typename T, Layout L>
+        void post_svd(std::vector<double>& d, Matrix<T, L>& U, Matrix<T, L>& V, bool accumulate) {
+            const size_t k = d.size();
+            for (size_t i = 0; i < k; ++i) {
+                if (d[i] < 0.0) {
+                    d[i] = -d[i];
+                    if (accumulate) {
+                        for (size_t r = 0; r < U.rows(); ++r) U(r, i) = -U(r, i);
+                    };
+                };
+            };
+            std::vector<size_t> idx(k);
+            for (size_t i = 0; i < k; ++i) idx[i] = i;
+            std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return d[a] > d[b]; });
+            std::vector<double> d_sorted(k);
+            for (size_t i = 0; i < k; ++i) d_sorted[i] = d[idx[i]];
+            d = std::move(d_sorted);
+            if (!accumulate) return;
+            Matrix<T, L> U_sorted(U.rows(), k), V_sorted(V.rows(), k);
+            for (size_t i = 0; i < k; ++i) {
+                for (size_t r = 0; r < U.rows(); ++r) U_sorted(r, i) = U(r, idx[i]);
+                for (size_t r = 0; r < V.rows(); ++r) V_sorted(r, i) = V(r, idx[i]);
+            };
+            U = std::move(U_sorted);
+            V = std::move(V_sorted);
+        };
+
+        struct DqdsBlock { size_t lo, hi; double shift; }; // Inclusive index range + shift already absorbed into it.
+
+        LINALG_INLINE bool dqds_sweep(std::vector<double>& qv, std::vector<double>& ev, size_t lo, size_t hi, double tau) {
+            double dd = qv[lo] - tau;
+            if (dd < 0.0) return false;
+            for (size_t i = lo; i < hi; ++i) {
+                const double qp = dd + ev[i];
+                if (qp == 0.0) return false;
+                const double t = qv[i + 1] / qp;
+                ev[i] = ev[i] * t;
+                qv[i] = qp;
+                dd = dd * t - tau;
+                if (dd < 0.0) return false;
+            };
+            qv[hi] = dd;
+            return true;
+        };
+
+        LINALG_INLINE double dqds_shift(const std::vector<double>& qv, const std::vector<double>& ev, size_t lo, size_t hi) {
+            if (hi == lo) return 0.0;
+            const double a = qv[hi - 1] + (hi >= lo + 2 ? ev[hi - 2] : 0.0);
+            const double d = qv[hi] + ev[hi - 1];
+            const double c_sq = qv[hi - 1] * ev[hi - 1];
+            const double tr = a + d;
+            const double disc = std::sqrt(std::max(0.0, (a - d) * (a - d) / 4.0 + c_sq));
+            const double l2 = tr / 2.0 - disc; // Smaller root -> safe (non-negative by construction) shift.
+            return std::max(0.0, l2);
+        };
+    };
+
+    /// @brief Values-only singular value computation via dqds.
+    /// @param d Diagonal of the real bidiagonal `B` (post-bidiagonalization).
+    /// @param e Superdiagonal of `B`.
+    /// @return Singular values, descending.
+    LINALG_INLINE Vector<double> dqds(const Vector<double>& d, const Vector<double>& e) {
+        const size_t n = d.size();
+        if (n == 0) return Vector<double>(0);
+        if (n == 1) { Vector<double> s(1); s[0] = std::abs(d[0]); return s; };
+
+        std::vector<double> qv(n), ev(n - 1);
+        for (size_t i = 0; i < n; ++i) qv[i] = d[i] * d[i];
+        for (size_t i = 0; i + 1 < n; ++i) ev[i] = e[i] * e[i];
+
+        const double eps = std::numeric_limits<double>::epsilon();
+        std::vector<detail::DqdsBlock> stack{ {0, n - 1, 0.0} };
+        std::vector<double> result;
+        result.reserve(n);
+        int global_iter = 0;
+        const int iter_cap = static_cast<int>(n) * detail::MAX_ITER_PER_SVAL * 4;
+
+        while (!stack.empty()) {
+            detail::DqdsBlock blk = stack.back(); stack.pop_back();
+            const size_t lo = blk.lo, hi = blk.hi;
+            if (lo == hi) { result.push_back(qv[lo] + blk.shift); continue; };
+            // Split on negligible ev entries within [lo, hi); both children inherit the
+            // parent's already-accumulated shift unchanged (splitting doesn't shift anything).
+            bool split = false;
+            for (size_t i = lo; i < hi; ++i) {
+                const double tol = eps * eps * (qv[i] + qv[i + 1] + 1.0); // ev entries are squared, hence eps^2 scale.
+                if (ev[i] <= tol) {
+                    stack.push_back({ i + 1, hi, blk.shift });
+                    stack.push_back({ lo, i, blk.shift });
+                    split = true;
+                    break;
+                };
+            };
+            if (split) continue;
+
+            const double tau = detail::dqds_shift(qv, ev, lo, hi);
+            double applied_shift = tau;
+            if (tau != 0.0) {
+                // Snapshot before attempting the shifted sweep: a failure leaves qv/ev
+                // partially transformed under the (rejected) tau, which must not leak into
+                // the tau=0 retry.
+                std::vector<double> qv_snap(qv.begin() + lo, qv.begin() + hi + 1);
+                std::vector<double> ev_snap(ev.begin() + lo, ev.begin() + hi);
+                if (!detail::dqds_sweep(qv, ev, lo, hi, tau)) {
+                    std::copy(qv_snap.begin(), qv_snap.end(), qv.begin() + lo);
+                    std::copy(ev_snap.begin(), ev_snap.end(), ev.begin() + lo);
+                    detail::dqds_sweep(qv, ev, lo, hi, 0.0); // Always succeeds: see dqds_sweep's tau=0 non-negativity argument.
+                    applied_shift = 0.0;
+                };
+            } else {
+                detail::dqds_sweep(qv, ev, lo, hi, 0.0);
+            };
+            stack.push_back({ lo, hi, blk.shift + applied_shift });
+
+            if (++global_iter > iter_cap) throw std::runtime_error("dqds: iteration cap exceeded.");
+            // Re-check for a fresh split created by this sweep before iterating again.
+            for (size_t i = lo; i < hi; ++i) {
+                const double tol = eps * eps * (qv[i] + qv[i + 1] + 1.0);
+                if (ev[i] <= tol) {
+                    stack.pop_back();
+                    stack.push_back({ i + 1, hi, blk.shift + applied_shift });
+                    stack.push_back({ lo, i, blk.shift + applied_shift });
+                    break;
+                };
+            };
+        };
+
+        std::sort(result.begin(), result.end(), std::greater<double>());
+        Vector<double> s(result.size());
+        for (size_t i = 0; i < result.size(); ++i) s[i] = std::sqrt(std::max(0.0, result[i]));
+        return s;
+    };
+
+    /// @brief Singular Value Decomposition: `A = U * diag(S) * V^H`.
+    /// @param A Matrix to be decomposed.
+    /// @return `SVDResult` structure.
+    /// @note Convergence failure (exceeded iteration cap) throws `std::runtime_error`, matching
+    /// `potrf`'s convention for numerically-terminal failures rather than returning a sentinel.
+    template<typename T, Layout L>
+    SVDResult<T, L> svd(const Matrix<T, L>& A) {
+        SVDResult<T, L> res;
+        BidiagResult<T, L> bd = bidiag(A, /*accumulate_uv=*/true);
+        std::vector<double> d(bd.d.size()), e(bd.e.size());
+        for (size_t i = 0; i < d.size(); ++i) d[i] = bd.d[i];
+        for (size_t i = 0; i < e.size(); ++i) e[i] = bd.e[i];
+
+        if (!detail::gkr_iteration(d, e, bd.U, bd.V, true))
+            throw std::runtime_error("svd: Golub-Kahan-Reinsch iteration failed to converge.");
+        detail::post_svd(d, bd.U, bd.V, true);
+
+        res.U = std::move(bd.U);
+        res.V = std::move(bd.V);
+        res.s = Vector<double>(d.size());
+        for (size_t i = 0; i < d.size(); ++i) res.s[i] = d[i];
+        return res;
+    };
+
+    template<typename T, Layout L, typename E>
+    SVDResult<T, L> svd(const MatExpr<E>& e) {
+        return svd(Matrix<T, L>(e));
     };
 };
