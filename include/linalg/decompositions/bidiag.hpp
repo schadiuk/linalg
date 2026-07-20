@@ -326,6 +326,92 @@ namespace linalg {
                 };
             };
         };
+
+        template<typename T, Layout L>
+        BidiagResult<T, L> bidiag_tall_blocked(const Matrix<T, L>& A, bool accumulate_uv) {
+            const size_t m = A.rows(), n = A.cols();
+            const size_t k = n;
+            Matrix<T, L> W = A;
+            std::vector<Vector<T>> us(k), vs(k > 0 ? k - 1 : 0);
+            std::vector<double> ubeta(k, 0.0), vbeta(k > 0 ? k - 1 : 0, 0.0);
+
+            size_t kk = 0;
+            while (kk < k) {
+                const size_t nb = std::min(BIDIAG_BLOCK, k - kk);
+                const size_t M = m - kk, N = n - kk;
+                // Extract the remaining (M*N) submatrix into a tight local working copy.
+                Matrix<T, L> Wp(M, N);
+                parallel_for(M, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (N + 1)), [&](size_t is, size_t ie) {
+                    for (size_t i = is; i < ie; ++i)
+                        for (size_t j = 0; j < N; ++j) Wp(i, j) = W(kk + i, kk + j);
+                });
+
+                std::vector<Vector<T>> u1s, v1s;
+                std::vector<double> utau, vtau;
+                Matrix<T, L> X, Y;
+
+                kernels::labrd(Wp, M, N, nb, u1s, utau, v1s, vtau, X, Y);
+
+                for (size_t i = 0; i < u1s.size(); ++i) { us[kk + i] = u1s[i]; ubeta[kk + i] = utau[i]; };
+                for (size_t i = 0; i < v1s.size(); ++i) { vs[kk + i] = v1s[i]; vbeta[kk + i] = vtau[i]; };
+
+                const size_t Mtrail = M - nb, Ntrail = N - nb;
+                if (Mtrail > 0 && Ntrail > 0) {
+                    Matrix<T, L> Vtrail(Mtrail, nb), Ytrail(Ntrail, nb);
+                    Matrix<T, L> Xtrail(Mtrail, nb), Utrail(nb, Ntrail, T(0));
+                    parallel_for(nb, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (Mtrail + Ntrail + 1)),
+                        [&](size_t is, size_t ie) {
+                            for (size_t i = is; i < ie; ++i) {
+                                for (size_t r = 0; r < Mtrail; ++r) Vtrail(r, i) = u1s[i][nb + r - i];
+                                for (size_t r = 0; r < Mtrail; ++r) Xtrail(r, i) = X(nb + r, i);
+                                for (size_t c = 0; c < Ntrail; ++c) Ytrail(c, i) = Y(nb + c, i);
+                                for (size_t c = 0; c < Ntrail; ++c) Utrail(i, c) = conj(v1s[i][nb + c - i - 1]);
+                            };
+                        });
+ 
+                    Matrix<T, L> Atrail(Mtrail, Ntrail);
+                    parallel_for(Mtrail, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (Ntrail + 1)), [&](size_t rs, size_t re) {
+                        for (size_t r = rs; r < re; ++r)
+                            for (size_t c = 0; c < Ntrail; ++c) Atrail(r, c) = Wp(nb + r, nb + c);
+                    });
+                    // A_trail -= V*Y^H + X*U (the two deferred corrections):
+                    gemm(T(-1), expr(Vtrail), hermitian(Ytrail), T(1), Atrail);
+                    gemm(T(-1), expr(Xtrail), expr(Utrail), T(1), Atrail);
+
+                    parallel_for(Mtrail, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (Ntrail + 1)), [&](size_t rs, size_t re) {
+                        for (size_t r = rs; r < re; ++r)
+                            for (size_t c = 0; c < Ntrail; ++c) Wp(nb + r, nb + c) = Atrail(r, c);
+                    });
+                };
+
+                for (size_t i = 0; i < nb; ++i) {
+                    const size_t g = kk + i;
+                    W(g, g) = Wp(i, i);
+                    parallel_for(m - (g + 1), PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) { for (size_t r = rs; r < re; ++r) W(g + 1 + r, g) = T(0); });
+                    if (g + 1 < n) {
+                        W(g, g + 1) = Wp(i, i + 1);
+                        parallel_for(n - (g + 2), PARALLEL_THRESHOLD_SIMPLE, [&](size_t cs, size_t ce) { for (size_t c = cs; c < ce; ++c) W(g, g + 2 + c) = T(0); });
+                    };
+                };
+
+                parallel_for(Mtrail, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (Ntrail + 1)), [&](size_t rs, size_t re) {
+                    for (size_t r = rs; r < re; ++r)
+                        for (size_t c = 0; c < Ntrail; ++c) W(kk + nb + r, kk + nb + c) = Wp(nb + r, nb + c);
+                });
+ 
+                kk += nb;
+            };
+ 
+            return bidiag_finalise_tall<T, L>(m, n, k, W, us, ubeta, vs, vbeta, accumulate_uv);
+        };
+
+        // Dispatch: blocked path for matrices wide enough to amortise panel overhead.
+        template<typename T, Layout L>
+        BidiagResult<T, L> bidiag_tall(const Matrix<T, L>& A, bool accumulate_uv) {
+            if (A.cols() > BIDIAG_BLOCK) return bidiag_tall_blocked(A, accumulate_uv);
+            return bidiag_tall_unblocked(A, accumulate_uv);
+        };
+
     };
 
     /// @brief Golub-Kahan bidiagonalisation: `A = U * B * V^H`, `B` real bidiagonal.
