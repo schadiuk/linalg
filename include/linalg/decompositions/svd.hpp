@@ -19,11 +19,13 @@ namespace linalg {
         void rot_col(Matrix<T, L>& M, size_t ci, size_t cj, double c, double s) {
             const size_t m = M.rows();
             if (m == 0) return;
+            const T cc = static_cast<T>(c), ss = static_cast<T>(s);
             parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+                LINALG_VECTORIZE
                 for (size_t r = rs; r < re; ++r) {
                     const T a = M(r, ci), b = M(r, cj);
-                    M(r, ci) = static_cast<T>(c) * a + static_cast<T>(s) * b;
-                    M(r, cj) = static_cast<T>(-s) * a + static_cast<T>(c) * b;
+                    M(r, ci) = cc * a + ss * b;
+                    M(r, cj) = -ss * a + cc * b;
                 };
             });
         };
@@ -131,7 +133,10 @@ namespace linalg {
                 if (d[i] < 0.0) {
                     d[i] = -d[i];
                     if (accumulate) {
-                        for (size_t r = 0; r < U.rows(); ++r) U(r, i) = -U(r, i);
+                        parallel_for(U.rows(), PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
+                            LINALG_VECTORIZE
+                            for (size_t r = rs; r < re; ++r) U(r, i) = -U(r, i);
+                        });
                     };
                 };
             };
@@ -142,16 +147,24 @@ namespace linalg {
             for (size_t i = 0; i < k; ++i) d_sorted[i] = d[idx[i]];
             d = std::move(d_sorted);
             if (!accumulate) return;
+            // Column permutation: independent per output column `i`.
             Matrix<T, L> U_sorted(U.rows(), k), V_sorted(V.rows(), k);
-            for (size_t i = 0; i < k; ++i) {
-                for (size_t r = 0; r < U.rows(); ++r) U_sorted(r, i) = U(r, idx[i]);
-                for (size_t r = 0; r < V.rows(); ++r) V_sorted(r, i) = V(r, idx[i]);
-            };
+            const size_t urows = U.rows(), vrows = V.rows();
+            parallel_for(k, std::max(size_t(1), PARALLEL_THRESHOLD_SIMPLE / (urows + vrows + 1)),
+                [&](size_t is, size_t ie) {
+                    for (size_t i = is; i < ie; ++i) {
+                        const size_t src = idx[i];
+                        LINALG_VECTORIZE
+                        for (size_t r = 0; r < urows; ++r) U_sorted(r, i) = U(r, src);
+                        LINALG_VECTORIZE
+                        for (size_t r = 0; r < vrows; ++r) V_sorted(r, i) = V(r, src);
+                    };
+                });
             U = std::move(U_sorted);
             V = std::move(V_sorted);
         };
 
-        struct DqdsBlock { size_t lo, hi; double shift; }; // Inclusive index range + shift already absorbed into it.
+        struct DqdsBlock { size_t lo, hi; double shift; };
 
         LINALG_INLINE bool dqds_sweep(std::vector<double>& qv, std::vector<double>& ev, size_t lo, size_t hi, double tau) {
             double dd = qv[lo] - tau;
@@ -176,7 +189,7 @@ namespace linalg {
             const double c_sq = qv[hi - 1] * ev[hi - 1];
             const double tr = a + d;
             const double disc = std::sqrt(std::max(0.0, (a - d) * (a - d) / 4.0 + c_sq));
-            const double l2 = tr / 2.0 - disc; // Smaller root -> safe (non-negative by construction) shift.
+            const double l2 = tr / 2.0 - disc; // Smaller root yields safe (non-negative by construction) shift.
             return std::max(0.0, l2);
         };
     };
@@ -185,6 +198,7 @@ namespace linalg {
     /// @param d Diagonal of the real bidiagonal `B` (post-bidiagonalization).
     /// @param e Superdiagonal of `B`.
     /// @return Singular values, descending.
+    /// @throw `std::runtime_error` on convergence failure.
     LINALG_INLINE Vector<double> dqds(const Vector<double>& d, const Vector<double>& e) {
         const size_t n = d.size();
         if (n == 0) return Vector<double>(0);
@@ -222,9 +236,7 @@ namespace linalg {
             const double tau = detail::dqds_shift(qv, ev, lo, hi);
             double applied_shift = tau;
             if (tau != 0.0) {
-                // Snapshot before attempting the shifted sweep: a failure leaves qv/ev
-                // partially transformed under the (rejected) tau, which must not leak into
-                // the tau=0 retry.
+                // Snapshot before attempting the shifted sweep: a failure leaves qv/ev partially transformed under the (rejected) tau, which must not leak into the tau=0 retry.
                 std::vector<double> qv_snap(qv.begin() + lo, qv.begin() + hi + 1);
                 std::vector<double> ev_snap(ev.begin() + lo, ev.begin() + hi);
                 if (!detail::dqds_sweep(qv, ev, lo, hi, tau)) {
@@ -260,8 +272,7 @@ namespace linalg {
     /// @brief Singular Value Decomposition: `A = U * diag(S) * V^H`.
     /// @param A Matrix to be decomposed.
     /// @return `SVDResult` structure.
-    /// @note Convergence failure (exceeded iteration cap) throws `std::runtime_error`, matching
-    /// `potrf`'s convention for numerically-terminal failures rather than returning a sentinel.
+    /// @throw `std::runtime_error` when GKR iteration fails to converge.
     template<typename T, Layout L>
     SVDResult<T, L> svd(const Matrix<T, L>& A) {
         SVDResult<T, L> res;
