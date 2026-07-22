@@ -12,6 +12,9 @@
 - [Blocked bidiagonalisation](#4-blocked-bidiagonalisation)
 - [Wide matrices](#5-wide-matrices)
 - [GKR algorithm](#6-golub-kahan-reinsch-iteration)
+- [Post-processing](#7-post-processing)
+- [`dqds` algorithm](#8-fast-singular-value-path-dqds)
+- [Public API](#9-public-api)
 
 ---
 ## 0. Preamble and notation
@@ -288,3 +291,105 @@ void gkr_step(std::vector<double>& d, std::vector<double>& e, size_t p, size_t q
 Each iteration of the $k$-loop performs **one right rotation** (columns $k, k{+}1$ of $B$, accumulated into $V$) immediately followed by **one left rotation** (rows $k, k{+}1$, accumulated into $U$). The right rotation zeros the "bulge" element $g$ introduced by the previous step (or, at $k=p$, by the shift itself) into the superdiagonal position $f$; this necessarily creates a *new* bulge one position further along ($g \leftarrow s \cdot d_{k+1}$), which the following left rotation similarly absorbs while creating the next bulge for the next iteration. `rotg` is the standard (real or complex-$s$/real-$c$) Givens rotation constructor shared with [`schur.hpp`](/reference/SCHUR.md)'s own bulge chases. After $q - p$ iterations the bulge has been walked entirely out of the active window and `e[q-1] = f` records the final superdiagonal entry.
 
 ---
+## 7. Post-processing
+
+`gkr_iteration` only drives the off-diagonal to zero; it places no constraint on the *sign* of the surviving diagonal entries, and no ordering constraint at all. `post_svd` performs both cleanups after convergence:
+
+1. **Sign.** For each $d_i < 0$: negate it, and negate the corresponding column of $U$ (a diagonal $\pm1$ correction: the real-valued special case of  phase-folding described [here](#32-compensating---transforms)). Flipping $u_i \to -u_i$ compensates $d_i \to -d_i$ so the product $u_i d_i v_i^H$ is unchanged.
+2. **Order.** Sort a permutation `idx` by descending $d$, then reorder the columns of $U$ and $V$ (and $d$ itself) through it in one pass.
+
+Both loops are $O(k \cdot \text{rows})$, parallelised over the (potentially large) row dimension since $k$ itself is bounded by $\min(m,n)$.
+
+---
+## 8. Fast singular value path: `dqds`
+
+The `dqds` algorithm (Differential Quotient-Difference with shifts) allows to find all singular values of a bidiagonal matrix at $O(n)$ time while retaining high relative acuraccy. The algorithm operates on implicitly squared problem  $q_i = d_i^2$, $e_i^2$ that enables a scalar recurrence known as the differential quotient-difference (qd) transform.
+
+### 8.1 Shifted `qd` sweep
+```cpp
+LINALG_INLINE bool dqds_sweep(std::vector<double>& qv, std::vector<double>& ev, size_t lo, size_t hi, double tau) {
+    double dd = qv[lo] - tau;
+    if (dd < 0.0) return false;
+    for (size_t i = lo; i < hi; ++i) {
+        const double qp = dd + ev[i];
+        if (qp == 0.0) return false;
+        const double t = qv[i + 1] / qp;
+        ev[i] = ev[i] * t;
+        qv[i] = qp;
+        dd = dd * t - tau;
+        if (dd < 0.0) return false;
+    };
+    qv[hi] = dd;
+    return true;
+};
+```
+
+The code implements Rutishauser-style stationary qd recurrence with an origin shift $\tau$, applied in place to the squared quantities. A non-negative $dd$ at every step is both a correctness precondition (square roots of negative numbers are meaningless here) and the numerical-stability signature of a *safe* shift; the function returns `false` the moment it is violated, without finishing the sweep.
+
+With $\tau = 0$: $dd$ starts at $qv[lo] \geq 0$; by induction $qp = dd + ev[i] \geq 0$ (both non-negative), so $t = qv[i{+}1]/qp \geq 0$, and $dd \leftarrow dd \cdot t \geq 0$. The zero-shift sweep can therefore never trigger the failure path, making it a suitable fallback whenever a nonzero-shift attempt fails.
+
+### 8.2 Shift selection
+
+`dqds_shift` computes a Wilkinson-style shift on the trailing $2\times2$ of the *squared* problem directly (no square root needed, since the recurrence already works in squared units), then clamped to be non-negative. Because a shift can fail mid-sweep (a partial, now-corrupted `qv`/`ev` in $[lo,hi]$), the driving loop in `dqds()` snapshots the block before attempting a nonzero shift and rolls back to retry with $\tau = 0$ on failure:
+```cpp
+if (!detail::dqds_sweep(qv, ev, lo, hi, tau)) {
+    std::copy(qv_snap.begin(), qv_snap.end(), qv.begin() + lo);
+    std::copy(ev_snap.begin(), ev_snap.end(), ev.begin() + lo);
+    detail::dqds_sweep(qv, ev, lo, hi, 0.0); // Always succeeds.
+    applied_shift = 0.0;
+};
+```
+---
+
+Before every sweep attempt (and again immediately after, in case the sweep itself created a new negligible entry), the active $[lo, hi]$ range is scanned for a negligible $ev_i \leq \varepsilon^2 (qv_i + qv_{i+1} + 1)$.
+
+The $\varepsilon^2$ threshold is preferred over $\varepsilon$ because `ev` entries are already squared quantities, so an $O(\varepsilon)$-relative error in the *unsquared* superdiagonal appears as $O(\varepsilon^2)$ here. A negligible entry splits the block into two independent children on an explicit stack, each inheriting the parent's already-accumulated shift unchanged (splitting does not itself shift anything). A block that shrinks to a single index `lo == hi` yields one converged eigenvalue of the squared problem, $qv[lo] + \text{shift}$; the final singular values are $\sqrt{\max(0, \cdot)}$ of these, sorted descending.
+
+---
+## 9. Public API
+
+### 9.1 `bidiag()`: the entry point
+```cpp
+template<typename T, Layout L>
+BidiagResult<T, L> bidiag(const Matrix<T, L>& A, bool accumulate_uv = true);
+
+// Returns structure:
+template<typename T, Layout LL>
+struct BidiagResult {
+    Matrix<T, LL> U;    // Left Householder product.
+    Vector<double> d;   // Main diagonal of `B`, length `k = min(m, n)`.
+    Vector<double> e;   // Superdiagonal of `B`, length `k - 1`.
+    Matrix<T, LL> V;    // Right Householder product (non-transposed).
+};
+```
+
+`accumulate_uv = false` skips both reflector-replay accumulations entirely, returning only `d`/`e` - the cheaper path when only the bidiagonal form itself (e.g. as a precursor to [`dqds`](#8-fast-singular-value-path-dqds)) is needed. `d` carries **no** sign or ordering guarantee (see the discussion [here](#7-post-processing)); only `SVDResult::s` does.
+
+### 9.2 `svd()`
+```cpp
+template<typename T, Layout L>
+SVDResult<T, L> svd(const Matrix<T, L>& A);
+
+// Returns:
+template<typename T, Layout LL>
+struct SVDResult {
+    Matrix<T, LL> U;    // Left singular vectors as columns.
+    Vector<double> s;   // Vector of singular values, sorted in descending order.
+    Matrix<T, LL> V;    // Right singular vectors as columns (non-transposed).
+};
+```
+
+Always accumulates $U$, $V$ (there is no values-only overload of `svd()` itself - use [`dqds`](#93-dqds) directly for that). Throws `std::runtime_error` if `gkr_iteration` exceeds its iteration cap.
+
+### 9.3 `dqds()`: singular value-only path
+```cpp
+Vector<double> dqds(const Vector<double>& d, const Vector<double>& e);
+```
+
+Free function (no `T`/`Layout` template parameters  operates purely on the real diagonal/superdiagonal). Typical use is as follows:
+```cpp
+Matrix<double> A;
+
+auto res = bidiag(A, /*accumulate_uv=*/false); // No reflectors are needed.
+Vector<double> svals = dqds(res.d, res.e);
+```
