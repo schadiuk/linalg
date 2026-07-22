@@ -9,6 +9,9 @@
 - [Mathematical foundation](#1-mathematical-foundations)
 - [Unblocked bidiagonalisation](#2-bidiagonalisation)
 - [The problem of real diagonal](#3-realifying-the-diagonal)
+- [Blocked bidiagonalisation](#4-blocked-bidiagonalisation)
+- [Wide matrices](#5-wide-matrices)
+- [GKR algorithm](#6-golub-kahan-reinsch-iteration)
 
 ---
 ## 0. Preamble and notation
@@ -144,5 +147,144 @@ Trying $x_i = \overline{d_{l,i}}$: the diagonal condition gives $\bar y_i = 1/(d
 $$U_{\text{new}} = U_{\text{raw}} \cdot D_L^H \qquad V_{\text{new}} = V_{\text{raw}} \cdot D_R$$
 
 *Note:* the derivation is only valid if `super[i]` fed into `real_bidiag` is exactly $\bar\alpha$ from earlier.
+
+---
+## 4. Blocked bidiagonalisation
+
+`labrd` (panel reduction) and `bidiag_tall_blocked` (driver) are the LAPACK `ZLABRD`/`ZGEBRD` pair equivalent blocked path, used whenever $n > n_b = 64$. The structure resembles that present in QR's [`larft`](/reference/QR.md#4-larft-compact-wy-t-matrix-construction) / [`apply_wy_left`](/reference/QR.md#5-apply_wy_left-blocked-trailing-update) split: a Level-2 panel factorisation produces auxiliary matrices, which a single pair of Level-3 GEMMs then applies to the untouched trailing submatrix. However, QR's compact $T$-matrix becomes **two** auxiliary matrices $X$, $Y$ here with each panel column carryiong *two* reflectors (left and right) instead of one.
+
+### 4.1 Deferred-update identity
+
+After a panel of width $n_b$ is factored, the trailing $(M - n_b) \times (N - n_b)$ submatrix satisfies
+
+$$A_{\text{trail}} \;\leftarrow\; A_{\text{trail}} - V\,Y^H - X\,U$$
+
+where $V \in \mathbb{F}^{(M-n_b) \times n_b}$, $X \in \mathbb{F}^{(M-n_b) \times n_b}$ hold *(embedded slices of)* the left reflectors and their derived correction vectors, and $Y \in \mathbb{F}^{(N-n_b) \times n_b}$, $U \in \mathbb{F}^{n_b \times (N-n_b)}$ the corresponding right-side quantities. 
+
+This is the announced earlier two-sided analogue of QR's $W_{\text{trail}} \leftarrow (I - VTV^H)W_{\text{trail}}$: a rank-$n_b$ correction from the left reflectors ($VY^H$) plus a second rank-$n_b$ correction from the right reflectors ($XU$), applied in two GEMMs instead of $n_b$ individual reflector applications.
+
+### 4.2 Reflector renormalisation
+
+`householder_reflector` returns an arbitrarily-scaled valid pair $(v, \beta)$: for any nonzero scalar $c$, $(cv,\, \beta/|c|^2)$ represents the *identical* operator $H = I - \beta v v^H$, since
+
+$$\left(\frac{\beta}{|c|^2}\right)(cv)(cv)^H = \frac{\beta}{|c|^2}\, |c|^2\, v v^H = \beta\, v v^H$$
+ 
+`apply_householder_left`/`apply_householder_right` apply $H$ correctly for *any such pair* - they were never restricted to a particular scaling (this is exactly what lets QR's own reflectors be stored and replayed without normalisation). The panel routine exploits this to locally renormalise every reflector to **LAPACK convention** by setting $v_1[0] = 1$, $\tau = \beta |v[0]|^2$: `ZLABRD` conjugates row $i$ in place before the pair of GEMVs that correct $\text{Wp}(i,\, i{+}1{:}N{-}1)$, performs them, and un-conjugates the *whole* row again only after the right reflector and $X(:,i)$ have been built - i.e. the row spends most of step $i$ in a conjugated state.
+
+### 4.3 $X$, $Y$ construction
+
+For panel-local step $i$ (global column $k{+}i$), with `len_u` $= M-i$, `ncol_trail` $= N-i-1$, `len_v` $=$ `ncol_trail`:
+ 
+| Term | Formula | Shape |
+|---|---|---|
+| Column correction | $\text{Wp}(i{:}M{-}1, i) \mathrel{-}= \text{Wp}(i{:}M{-}1, 0{:}i) \cdot \overline{Y(i, 0{:}i)}^\top + X(i{:}M{-}1, 0{:}i) \cdot \text{Wp}(0{:}i, i)$ | $O(\text{len\_u} \cdot i)$ |
+| $Y$ main term | $Y(i{+}1{:}N{-}1, i) = \overline{\text{Wp}(i{:}M{-}1,\, i{+}1{:}N{-}1)}^\top v_1$ | $O(\text{len\_u} \cdot \text{ncol\_trail})$ |
+| $Y$ correction (×2) | Subtract cross-terms through `ybuf`/`ybuf2` (inner products against previously-built $Y$, $X$ columns). | $O(i \cdot \text{len\_u})$ each |
+| Row correction | Cf. the discussion earlier. | $O(i \cdot \text{ncol\_trail})$ |
+| $X$ main term | $X(i{+}1{:}M{-}1, i) = \text{Wp}(i{+}1{:}M{-}1,\, i{+}1{:}N{-}1) \cdot u_{1v}$ | $O(\text{mrow\_trail} \cdot \text{len\_v})$ |
+| $X$ correction (×2) | Subtract cross-terms through `xbuf`/`xbuf2` | $O(i \cdot \text{len\_v})$ each. |
+
+The dominant terms - $Y$'s main term and $X$'s main term, each $O(MN)$ per panel step, $O(MNn_b)$ per panel - mirror QR's $O((m{-}j)(n{-}j))$ per-step trailing-update cost; the correction terms are all $O(i)$-bounded (never exceeding $n_b$) and therefore asymptotically dominated for large $M, N$.
+
+### 4.4 Deferred trailing update (driver)
+
+`bidiag_tall_blocked` extracts $V_{\text{trail}}$, $Y_{\text{trail}}$, $X_{\text{trail}}$, $U_{\text{trail}}$ — offset-embedded slices restricted to the trailing rows/columns, directly analogous to QR's [$V$ matrix construction](/reference/QR.md#52-the-v-matrix-layout):
+
+```cpp
+for (r = 0; r < Mtrail; ++r) Vtrail(r, i) = u1s[i][nb + r - i];
+for (r = 0; r < Mtrail; ++r) Xtrail(r, i) = X(nb + r, i);
+for (c = 0; c < Ntrail; ++c) Ytrail(c, i) = Y(nb + c, i);
+for (c = 0; c < Ntrail; ++c) Utrail(i, c) = conj(v1s[i][nb + c - i - 1]);
+```
+
+then applies [the known identity](#41-deferred-update-identity) as two GEMMs:
+
+```cpp
+gemm(T(-1), expr(Vtrail), hermitian(Ytrail), T(1), Atrail);   // A_trail -= V * Y^H
+gemm(T(-1), expr(Xtrail), expr(Utrail), T(1), Atrail);        // A_trail -= X * U
+```
+
+$A_{\text{trail}}$ itself is extract-and-written-back through a tight temporary, for the same stride-normalisation reason as QR's [$W_{\text{trail}}$ pattern](/reference/QR.md#53-extract-and-writeback-pattern).
+
+After the panel's own diagonal/superdiagonal are restored, the driver writes them into the global working matrix $W$, explicitly zeroing every other entry of that row/column (matching the unblocked convention so that `bidiag_finalize_tall` can read `d`/`e` back the same way regardless of which path produced them), then copies the GEMM-corrected trailing block back into $W$ for the next panel iteration to consume as its own fresh `Wp`.
+
+---
+## 5. Wide matrices
+
+`bidiag()` handles $m < n$ by bidiagonalising $A^H$ (which is $n \times m$, tall) and re-deriving the result for $A$ itself:
+
+```cpp
+Matrix<T, L> AH = hermitian(A);
+auto sub = detail::bidiag_tall(AH, accumulate_uv); // A^H = U' * B' * V'^H, B' upper bidiagonal.
+const size_t k = sub.d.size();
+BidiagResult<T, L> res;
+res.d = Vector<double>(k);
+for (size_t i = 0; i < k; ++i) res.d[i] = sub.d[k - 1 - i];
+res.e = Vector<double>(k > 0 ? k - 1 : 0);
+for (size_t i = 0; i + 1 < k; ++i) res.e[i] = sub.e[k - 2 - i];
+```
+
+Since $A^H = U' B' V'^H$, transposing gives $A = V' (B')^\top U'^H$ (real $B'$, so $(B')^H = (B')^\top$). $(B')^\top$ is **lower**.
+
+Reversing both the row and column order of a lower-bidiagonal matrix (index $i \mapsto k{-}1{-}i$) maps its subdiagonal onto a superdiagonal, turning it back into upper-bidiagonal form; reversing the columns of $U'$, $V'$ to match undoes the same index flip on the singular-vector side. The net effect - reverse `d`, reverse `e`, take $U = $ reversed $V'$ and $V = $ reversed $U'$ - reconstructs $A = U B V^H$ with $B$ upper bidiagonal, without a second Householder pass needed.
+
+---
+## 6. Golub-Kahan-Reinsch iteration
+
+### 6.1 Overview
+
+`gkr_iteration` diagonalises the real bidiagonal $B$ in place by applying the implicit-shift QR algorithm to the (never formed) symmetric tridiagonal $T = B^H B$. Each sweep is a sequence of Givens rotations, alternately applied from the right (to $B$'s columns, equivalently to $V$) and the left (to $B$'s rows, equivalently to $U$), that "chase a bulge" from the top-left to the bottom-right of the active window, mirroring the chasing pattern known as [Francis step](/reference/SCHUR.md#5-francis-implicit-single-shift-qr) used for the general eigenvalue problem, specialised to a single real shift because $T$ is symmetric.
+
+### 6.2 Wilkinson shift
+
+```cpp
+LINALG_INLINE double wilkinson_shift_bidiag(double dm1, double em1, double d0) {
+    const double a = dm1 * dm1;
+    const double b = dm1 * em1;
+    const double d = em1 * em1 + d0 * d0;
+    const double tr = a + d;
+    const double disc = std::sqrt(std::max(0.0, (a - d) * (a - d) / 4.0 + b * b));
+    const double l1 = tr / 2.0 + disc;
+    const double l2 = tr / 2.0 - disc;
+    return (std::abs(l1 - d) <= std::abs(l2 - d)) ? l1 : l2; // Eigenvalue closer to d.
+};
+```
+
+The trailing $2\times2$ principal submatrix of $T = B^H B$, expressed directly in $B$'s own entries $(d_{m-1}, e_{m-1}, d_0)$ (bottom-right corner of the active window), has eigenvalues $l_1, l_2$ from the usual $2\times2$ symmetric-eigenvalue formula. Choosing the root **closer to** $d = T_{qq}$ (rather than always the larger or smaller root) guarantees the shift is a good local approximation to the eigenvalue the iteration is about to converge to, giving asymptotically cubic convergence and avoiding spurious large shifts that would slow convergence on well-separated singular values.
+
+### 6.3 The bulge chase
+
+```cpp
+template<typename T, Layout L>
+void gkr_step(std::vector<double>& d, std::vector<double>& e, size_t p, size_t q,  double mu, Matrix<T, L>& U, Matrix<T, L>& V, bool accU, bool accV) {
+    double f = d[p] * d[p] - mu;
+    double g = d[p] * e[p];
+    for (size_t k = p; k < q; ++k) {
+        // Right rotation on columns (k, k+1): zero g into f.
+        double c, s, r = f, gg = g;
+        rotg(r, gg, c, s);
+        if (k > p) e[k - 1] = r;
+        if (accV) rot_col(V, k, k + 1, c, s);
+        f = c * d[k] + s * e[k];
+        e[k] = c * e[k] - s * d[k];
+        g = s * d[k + 1];
+        d[k + 1] = c * d[k + 1];
+        // Left rotation on rows (k, k+1): zero g into f.
+        double c2, s2, r2 = f, gg2 = g;
+        rotg(r2, gg2, c2, s2);
+        d[k] = r2;
+        if (accU) rot_col(U, k, k + 1, c2, s2);
+        f = c2 * e[k] + s2 * d[k + 1];
+        d[k + 1] = c2 * d[k + 1] - s2 * e[k];
+        if (k + 1 < q) {
+            g = s2 * e[k + 1];
+            e[k + 1] = c2 * e[k + 1];
+        };
+    };
+    e[q - 1] = f;
+};
+```
+
+Each iteration of the $k$-loop performs **one right rotation** (columns $k, k{+}1$ of $B$, accumulated into $V$) immediately followed by **one left rotation** (rows $k, k{+}1$, accumulated into $U$). The right rotation zeros the "bulge" element $g$ introduced by the previous step (or, at $k=p$, by the shift itself) into the superdiagonal position $f$; this necessarily creates a *new* bulge one position further along ($g \leftarrow s \cdot d_{k+1}$), which the following left rotation similarly absorbs while creating the next bulge for the next iteration. `rotg` is the standard (real or complex-$s$/real-$c$) Givens rotation constructor shared with [`schur.hpp`](/reference/SCHUR.md)'s own bulge chases. After $q - p$ iterations the bulge has been walked entirely out of the active window and `e[q-1] = f` records the final superdiagonal entry.
 
 ---
