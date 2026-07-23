@@ -3,7 +3,6 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 ---
 ## Table of contents
 - [Overview](#overview)
-- [Features](#features)
 - [Documentation](#documentation)
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
@@ -17,8 +16,7 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 ## Overview
 `linalg` provides dense vector and matrix operations with zero memory overhead lazy evaluation, GEMM and a custom-built parallel execution infrastructure. The library targets to explore typical numerical methods workflows where control over memory layout, precision and performance meet intuitive syntax with no external dependencies.
 
----
-## Features
+### Features
 - **Header-only**: including a single header file is the only setup needed.
 - **Expression templates**: arithmetic expressions (eg. `alpha * A - beta * B * C`) are lazy and allocation-free until assigned.
 - **BLAS**: optimised, CPU-friendly kernels for `gemv`, `gemm`, `trsv`, `trsm` and many more operations.
@@ -30,12 +28,13 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 ---
 ## Documentation
 
-The library features rich documentation: Doxygen-like comment blocks (natively supported by IntelliSense), detailed syntax overview placed in README, and comprehensive reference covering algorithm-heavy aspects. The text documents are available at the dedicated `reference` folder, and are organised as follows:
+The library features rich documentation: Doxygen-like comment blocks (natively supported by IntelliSense), detailed syntax overview placed in README, and comprehensive reference covering algorithm-heavy aspects. The text documents are available at the dedicated `reference/` folder, and are organised as follows:
 - [BLAS](/reference/BLAS.md)
 - [Cholesky factorisation](/reference/CHOLESKY.md)
 - [LU decomposition](/reference/LU.md)
 - [QR decomposition](/reference/QR.md)
 - [Schur decomposition](/reference/SCHUR.md)
+- [Singular value decomposition](/reference/SVD.md)
 
 *Note:* the format chosen is Markdown, supported by GitHub and a number of modern IDEs and editors (including [VS Code](https://code.visualstudio.com/docs/languages/markdown) - the one used in development). For easier understanding of the algorithms, it is recommended not to rely on GitHub website's rendering of formulas (some of which may be parsed incorrectly).
 
@@ -55,12 +54,12 @@ No third-party assets needed, as the standard library is the only dependency. Fo
 Compile with C++20 and enable optimisations for best performance. Below are sample `g++` commands:
 
 - Recommended set of flags (reproducible).
-```
-g++ -std=c++20 -march=native -O2 my_file.cpp
+```bash
+g++ -std=c++20 -march=native -O2
 ```
 - Performance-oriented build (note that adding `-ffast-math` trades floating-point safety for speed).
-```
-g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops -ftree-vectorize my_file.cpp
+```bash
+g++ -std=c++20 -march=native -mtune=native -O3 -funroll-loops
 ```
 ---
 ## Quick start
@@ -113,7 +112,7 @@ auto v = Vector<double>::ones(100);
 v[i]; v(i); // Unchecked
 v.at(i);    // Checked indexation.
 v.size();
-v.data(); // Raw T* data pointer.
+v.data();   // Raw T* data pointer.
 ```
 
 - `Matrix<T, L>` - contiguous aligned matrix. `L` denotes layout, defined by `linalg::Layout`: either `RowMajor` (default) or `ColMajor`. Participates in expression templates by means of `MatExpr<Matrix<T, L>>` and other dedicated classes. The view class - `MatrixView<T, L, Trans, Conj, Mutable>` - allows building non-owning matrix windows with compile-time transposition and conjugation flags.
@@ -144,7 +143,7 @@ A.reshape(new_rows, new_cols); // Total element count must be unchanged: rows * 
 
 auto tv = transpose(A); // MatrixView<double, RowMajor, true,  false, true>
 auto hv = hermitian(A); // MatrixView<double, RowMajor, true,  true,  false>
-auto mv = view(A); // MatrixView<double, RowMajor, false, false, true>
+auto mv = view(A);      // MatrixView<double, RowMajor, false, false, true>
 ```
 ---
 ## Expression infrastructure
@@ -214,6 +213,7 @@ Matrix<T> L = tril(A, -1); // Strict lower triangle.
 ```
 
 *Note:* somewhat more specific matrix constructors (Hilbert, Pascal, Vandermonde etc.) are available in a [separate file](/include/linalg/operations/constructors.hpp).
+
 ### Norms
 There are present matrix and vector norms, unified by common dispatch convention via `norm` function. List of them, indexed by `kind` argument, could be found in the table below.
 | Norm kind | Vector norm | Matrix norm | Notes |
@@ -225,7 +225,38 @@ There are present matrix and vector norms, unified by common dispatch convention
 | `inf` | Maximum absolute entry. | Maximum absolute row sum. | Infinity norm. |
 | `-inf`* | Smallest absolute entry. | Minimum absolute row sum. | Negative infinity "norm". |
 
-**Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms (cf. the [documentation](https://numpy.org/doc/stable/reference/generated/numpy.linalg.norm.html)). 
+**Note:* the `kind` convention was adopted from `linalg.norm` utility present in `NumPy`, hence existence of `-inf` pseudo-norms (cf. the [documentation](https://numpy.org/doc/stable/reference/generated/numpy.linalg.norm.html)).
+
+### Least squares
+The library offers solvers that deal with over- and underdetermined systems of linear equations. The dedicated function, `lstsq()` allows driver selection: `svd` (the default) or `qr` (faster, sparse basic solution). 
+```cpp
+auto A = Matrix<double>::random(n, m);
+auto b = Vector<double>::random(n);
+
+auto res = lstsq(A, b, /*driver=*/"svd", /*tol=*/1e-12);
+
+res.rank       // Numerical rank of the matrix.
+res.residual   // Residual norm.
+res.x          // Least-squares solution.
+```
+
+Multiple RHS is supported as well:
+```cpp
+auto A = Matrix<double>::random(n, m);
+auto B = Matrix<double>::random(n, n);
+
+auto res = lstsq(A, B, /*driver=*/"qr", /*tol=*/-1.0);  // Auto-tolerance.
+
+res.rank      // Numerical rank of the system's matrix.
+res.residuals // Per-column residual norms.
+res.X         // Least-squares solution.
+```
+
+An algorithmically related SVD-based routine allows to compute the (Moore-Penrose) pseudoinverse:
+```cpp
+auto A = Matrix<double>::random(n, m);
+Matrix<double> Ap = pinv(A, /*tol=*/-1.0);  // Auto-tolerance.
+```
 
 ---
 ## BLAS
@@ -296,10 +327,10 @@ auto Ainv = lu_inverse(res); // Inverse.
 Householder QR with optional column pivoting. Uses a blocked compact-WY update for large matrices. Finds matrices satisfying: $AP = QR$ (note the column permutation - opposite convention from LU).
 
 `qr()` master function accepts a range of `QRMode` values:
-| Value | Q shape | Use case |
+| Value | $Q$ shape | Use case |
 |---|---|---|
-| `QRMode::Reduced` | m * min(m,n) | Default; economy decomposition. |
-| `QRMode::Complete` | m * m | Full orthonormal basis. |
+| `QRMode::Reduced` | $m \times \min(m,n)$ | Default; economy decomposition. |
+| `QRMode::Complete` | $m \times m$ | Full orthonormal basis. |
 | `QRMode::R` |  | R only; fastest. |
 ```cpp
 // Modes:
@@ -336,6 +367,39 @@ res.balanced      // Boolean flag.
 
 Vector<DefaultScalar> = eigenvalues(A); // Convenience function.
 ```
+
+---
+### Bidiagonal and singular value decompositions
+The two decompositions are closely related: the former performs unitary reduction to bidiagonal form, while the latter deals with iterative diagonalisation of the obtained bidiagonal matrix. Precisely, a sequence of Householder reflectors reduces the input matrix $A$ to a real bidiagonal $B$, $A = UBV^H$, with $U, V$ unitary. The $B$ marix is then diagonalised, which yields the desired identity: 
+$$A = U B V^H = U (U' \Sigma V'^H) V^H = (UU') \cdot \Sigma \cdot (VV')^H$$
+
+Here $\Sigma = diag(s_0, \ldots, s_{k-1})$, with singular values sorted as $s_0 \geq s_1 \geq \cdots \geq 0$.
+
+- Typical bidiagonalisation workflow is as follows:
+  ```cpp
+  auto res = bidiag(A, /*accumulate_uv=*/false);
+
+  res.d // Main diagonal of B.
+  res.e // Super-diagonal.
+  res.U // Left reflector product (empty here).
+  res.V // Right reflector product (empty here).
+  ```
+
+  Using the function with `accumulate_uv` parameter set to `false` allows to compute the singular values directly using fast `dqds` algorithm (Differential Quotient-Difference with shifts):
+  ```cpp
+  // (Example is continued)
+  Vector<double> = dqds(res.d, res.e);
+  ```
+- SVD computation is performed in example below:
+  ```cpp
+  auto res = svd(A);  // Note that exclusively thin SVD is performed.
+
+  res.U // Left singular vectors as columns.
+  res.s // Vector of singular values, sorted in descending order.
+  res.V // Right singular vectors as columns (non-transposed).
+  ```
+
+*Note:* a thorough treatise of the algorithms can be found [here](/reference/SVD.md).
 
 
 ---
