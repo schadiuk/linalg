@@ -28,6 +28,8 @@
 #include <linalg/decompositions/qr.hpp>
 #include <linalg/decompositions/cholesky.hpp>
 #include <linalg/decompositions/schur.hpp>
+#include <linalg/decompositions/bidiag.hpp>
+#include <linalg/decompositions/svd.hpp>
 
 #include <linalg/solvers/lstsq.hpp>
 #include <linalg/solvers/eig.hpp>
