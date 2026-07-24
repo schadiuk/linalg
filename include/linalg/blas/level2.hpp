@@ -236,7 +236,12 @@ namespace linalg {
         detail::gemv_impl<T, L>(alpha, A, x, beta, y.data(), M, N);
     };
     
-    // Public interface output: VectorView<T,true>.
+    /// @brief General matrix-vector multiplication.
+    /// @param alpha Scaling factor (that of `A * x`).
+    /// @param A Matrix operand.
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Mutable vector view to be updated (via `y = alpha * A * x + beta * y`).
     template<typename T, Layout L = Layout::RowMajor, typename EM, typename EV>
     LINALG_INLINE void gemv(T alpha, const MatExpr<EM>& A, const VecExpr<EV>& x, T beta,  VectorView<T, true>& y) {
         const size_t M = A.self().rows();
@@ -286,8 +291,14 @@ namespace linalg {
     };
     
     template<typename T, Layout L, typename EX, typename EY>
-    LINALG_INLINE void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y,
-            MatrixView<T, L, false, false, true>& A) {
+    LINALG_INLINE 
+    /// @brief General rank-1 update.
+    /// @param alpha Scaling factor (that of product).
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Vector to be transposed (assumed column).
+    /// @param A Matrix to be updated (via `A = A + alpha * x * y^T `). 
+    void ger(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, MatrixView<T, L, false, false, true>& A) {
         const size_t M = A.rows(), N = A.cols();
         BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
         if (M == 0 || N == 0) return;
@@ -310,8 +321,14 @@ namespace linalg {
     };
     
     template<typename T, Layout L, typename EX, typename EY>
-    LINALG_INLINE void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y,
-            MatrixView<T, L, false, false, true>& A) {
+    LINALG_INLINE 
+    /// @brief General rank-1 conjugated update.
+    /// @param alpha Scaling factor (that of product).
+    /// @param x Independent vector operand.
+    /// @param beta Scaling factor (that of `y`).
+    /// @param y Vector to be transposed and conjugated (assumed column).
+    /// @param A Matrix to be updated (via `A = A + alpha * x * y^H `).
+    void gerc(T alpha, const VecExpr<EX>& x, const VecExpr<EY>& y, MatrixView<T, L, false, false, true>& A) {
         const size_t M = A.rows(), N = A.cols();
         BOUNDS_CHECK(x.self().size() == M && y.self().size() == N);
         if (M == 0 || N == 0) return;
@@ -355,7 +372,7 @@ namespace linalg {
             };
         } else {
             if (upper) {
-                // Forward pass over columns of A^T (= rows of A scanned upward)
+                // Forward pass over columns of A^T (= rows of A scanned upward).
                 for (size_t i = 0; i < N; ++i) {
                     T sum = x[i];
                     for (size_t j = 0; j < i; ++j) {
@@ -705,7 +722,14 @@ namespace linalg {
     };
  
     template<typename T, typename EM>
-    LINALG_INLINE void trmv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, VectorView<T, true>& x) {
+    LINALG_INLINE 
+    /// @brief Triangular matrix-vector product.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param diag Unit/non-unit diagonal indicator.
+    /// @param A_expr Matrix operand.
+    /// @param x Vector to be updated (via `x = op(A) * x`).
+    void trmv(char uplo, char trans, char diag, const MatExpr<EM>& A_expr, VectorView<T, true>& x) {
         const auto& A = A_expr.self();
         const size_t N = A.rows();
         BOUNDS_CHECK(A.cols() == N && x.size() == N && x.stride() == 1);

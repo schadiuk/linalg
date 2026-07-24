@@ -444,6 +444,11 @@ namespace linalg {
         return detail::bidiag_tall(A, accumulate_uv);
     };
 
+    /// @brief Golub-Kahan bidiagonalisation: `A = U * B * V^H`, `B` real bidiagonal.
+    /// @param A Matrix to be decomposed.
+    /// @param accumulate_uv Householder products accumulation flag.
+    /// @return Corresponding `BidiagResult` structure.
+    /// @note Wide matrices (`n > m`) are handled by bidiagonalising `A^H` (tall) and swapping the resulting `U`/`V`.
     template<typename T, Layout L, typename E>
     BidiagResult<T, L> bidiag(const MatExpr<E>& e, bool accumulate_uv = true) {
         return bidiag(Matrix<T, L>(e), accumulate_uv);

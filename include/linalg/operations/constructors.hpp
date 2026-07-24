@@ -100,7 +100,7 @@ namespace linalg {
     /// @param n Matrix size.
     /// @return `n * n` Pascal matrix.
     /// @note Unit determinant for all `n`.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> pascal(size_t n) {
         Matrix<T, L> P(n, n, T(0));
         for (size_t i = 0; i < n; ++i)
@@ -114,7 +114,7 @@ namespace linalg {
     /// @param perturbation Diagonal offset: `K(i,i) = s^i + perturbation`.
     /// @return `n * n` Kahan matrix.
     /// @note Non-zero diagonal perturbation can break exact singularity.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> kahan(size_t n, double theta = std::numbers::pi / 2, double perturbation = 0.0) {
         const double s = std::sin(theta), c = std::cos(theta);
         Matrix<T, L> K(n, n, T(0));
@@ -135,7 +135,7 @@ namespace linalg {
     /// @brief Hilbert matrix: `H(i,j) = 1 / (i + j + 1)`.
     /// @param n Matrix size.
     /// @return `n * n` symmetric Hilbert matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> hilbert(size_t n) {
         Matrix<T, L> H(n, n, T(0));
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
@@ -148,7 +148,7 @@ namespace linalg {
     /// @brief Lehmer matrix: `A(i, j) = min(i, j) / max(i, j)` (1-indexed formula).
     /// @param n Matrix size.
     /// @return `n * n` symmetric Lehmer matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> lehmer(size_t n) {
         Matrix<T, L> A(n, n, T(0));
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
@@ -166,7 +166,7 @@ namespace linalg {
     /// @brief Wilkinson matrix.
     /// @param n Matrix size.
     /// @return `n * n` tridiagonal matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> wilkinson(size_t n) {
         Matrix<T, L> W(n, n, T(0));
         const size_t half = n / 2;
@@ -181,7 +181,7 @@ namespace linalg {
     /// @param n Matrix size.
     /// @return `n * n` Frank matrix.
     /// @note Unit determinant for all `n`.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> frank(size_t n) {
         Matrix<T, L> F(n, n, T(0));
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
@@ -198,7 +198,7 @@ namespace linalg {
     /// @param n Matrix size.
     /// @return `n * n` Redheffer matrix.
     /// @note Determinant is given by the Mertens function of order `n`.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> redheffer(size_t n) {
         Matrix<T, L> R(n, n, T(0));
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&](size_t rs, size_t re) {
@@ -213,7 +213,7 @@ namespace linalg {
     /// @brief Hadamard matrix: mutually orthogonal rows; entries are either `+1` or `-1`.
     /// @param n Matrix size (required to be a power of 2).
     /// @return `n * n` symmetric Hadamard matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> hadamard(size_t n) {
         if (n == 0 || (n & (n - 1)) != 0) throw std::invalid_argument("hadamard: n must be a positve power of 2.");
         Matrix<T, L> H(n, n, T(0));
@@ -230,7 +230,7 @@ namespace linalg {
     /// @param d Main diagonal (length `n`).
     /// @param du Super-diagonal.
     /// @return `n * n` tridiagonal matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> tridiagonal(const Vector<T>& dl, const Vector<T>& d, const Vector<T>& du) {
         const size_t n = d.size();
         BOUNDS_CHECK(dl.size() == n - 1 && du.size() == n - 1);
@@ -248,7 +248,7 @@ namespace linalg {
     /// @param e Off-diagonal entries (length `n - 1`).
     /// @param upper Upper/lower sub-diagonal flag.
     /// @return `n * n` bidiagonal matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> bidiagonal(const Vector<T>& d, const Vector<T>& e, bool upper = true) {
         const size_t n = d.size();
         BOUNDS_CHECK(e.size() == n - 1);
@@ -269,7 +269,7 @@ namespace linalg {
     /// @param r Last row (length `n - 1`).
     /// @param alpha Corner entry: `A(n, n) = alpha`.
     /// @return `n * n` matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> arrowhead(const Vector<T>& d, const Vector<T>& c, const Vector<T>& r, T alpha) {
         const size_t nm = d.size();
         BOUNDS_CHECK(c.size() == nm && r.size() == nm);
@@ -287,7 +287,7 @@ namespace linalg {
     /// @brief Moler matrix: `M(i, j) = min(i, j) - 2`, diagonal is `M(i, i) = i`(1-indexed).
     /// @param n Matrix size.
     /// @return `n * n` symmetric matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> moler(size_t n) {
         Matrix<T, L> M(n, n, T(0));
         for (size_t i = 0; i < n; ++i) {
@@ -305,7 +305,7 @@ namespace linalg {
     /// @param n Matrix size.
     /// @param k Number of nonzero super-diagonals (default `k = 3`).
     /// @return `n * n` matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> grcar(size_t n, size_t k = 3) {
         Matrix<T, L> G(n, n, T(0));
         for (size_t i = 0; i < n; ++i) {
@@ -318,7 +318,7 @@ namespace linalg {
     /// @brief Lotkin matrix: Hilbert matrix with first row made unit.
     /// @param n Matrix size.
     /// @return Symmetric `n * n` matrix.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> lotkin(size_t n) {
         auto A = hilbert<T, L>(n);
         for (size_t j = 0; j < n; ++j) A(0, j) = T(1);
@@ -330,7 +330,7 @@ namespace linalg {
     /// @param symmetric When set to `true`, replaces the off-diagonals with their geometric means.
     /// @return `n * n` tridiagonal matrix.
     /// @note Singular for odd `n`.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> clement(size_t n, bool symmetric = false) {
         Matrix<T, L> C(n, n, T(0));
         for (size_t i = 0; i + 1 < n; ++i) {
@@ -354,7 +354,7 @@ namespace linalg {
     /// @param alpha Scaling factor.
     /// @return `n * n` matrix.
     /// @note Eigenvalues are `alpha + n` (single) and `alpha`.
-    template <typename T = double, Layout L = Layout::RowMajor>
+    template<typename T = double, Layout L = Layout::RowMajor>
     Matrix<T, L> pei(size_t n, T alpha = T(1)) {
         Matrix<T, L> P(n, n, T(1));
         for (size_t i = 0; i < n; ++i) P(i, i) += alpha;
@@ -365,7 +365,7 @@ namespace linalg {
     /// @param x Input vector (length `m`).
     /// @param n Number of columns (default `m`).
     /// @return `m * n` Vandermonde matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> vandermonde(const Vector<T>& x, size_t n = 0) {
         const size_t m = x.size();
         if (n == 0) n = m;
@@ -387,7 +387,7 @@ namespace linalg {
     /// @param x Input vector (length `m`).
     /// @param alpha Exponent vector (length `n`).
     /// @return `m * n` matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> vandermonde_gen(const Vector<T>& x, const Vector<T>& alpha) {
         const size_t m = x.size(), n = alpha.size();
         BOUNDS_CHECK(m > 0 && n > 0);
@@ -404,7 +404,7 @@ namespace linalg {
     /// @param y Input vector (length `n`).
     /// @return `m * n` matrix.
     /// @note Not to be confused with BLAS `ger` (which accumulates).
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> outer(const Vector<T>& x, const Vector<T>& y) {
         const size_t m = x.size(), n = y.size();
         BOUNDS_CHECK(m > 0 && n > 0);
@@ -421,7 +421,7 @@ namespace linalg {
     /// @brief Distance matrix: `D(i, j) = |x[i] - x[j]|`.
     /// @param x Input vector (length `n`).
     /// @return `n * n` symmetric distance matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> distance(const Vector<T>& x) {
         const size_t n = x.size();
         BOUNDS_CHECK(n > 0);
@@ -437,7 +437,7 @@ namespace linalg {
     /// @param x Input vector (length `m`).
     /// @param y Input vector (length `n`).
     /// @return `m * n` matrix.
-    template <typename T, Layout L = Layout::RowMajor>
+    template<typename T, Layout L = Layout::RowMajor>
     Matrix<T, L> distance(const Vector<T>& x, const Vector<T>& y) {
         const size_t m = x.size(), n = y.size();
         BOUNDS_CHECK(m > 0 && n > 0);

@@ -6,17 +6,17 @@ namespace linalg {
     // Publicly-visible least-squares result for a single RHS.
     template<typename T>
     struct LstsqVecResult {
-        Vector<T> x; // Solution vector (length n).
+        Vector<T> x;        // Solution vector (length n).
         double residual;
-        int rank; // Numerical rank of LHS matrix.
+        int rank;           // Numerical rank of LHS matrix.
     };
 
     // Publicly-visible least-squares result for multiple RHS.
     template<typename T, Layout L>
     struct LstsqMatResult {
-        Matrix<T, L> X; // Solution matrix (n * nrhs).
+        Matrix<T, L> X;            // Solution matrix (n * nrhs).
         Vector<double> residuals;
-        int rank; // Numerical rank of LHS matrix.
+        int rank;                  // Numerical rank of LHS matrix.
     };
 
     namespace detail {
@@ -131,11 +131,21 @@ namespace linalg {
         return { std::move(X), std::move(residuals), r };
     };
 
+    /// @brief Least-squares solution of `A * X = B` via QR decomposition.
+    /// @param A System's matrix.
+    /// @param b RHS vector.
+    /// @param tol Rank-detection tolerance.
+    /// @return `LstsqVecResult` object.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqVecResult<T> lstsq_qr(const MatExpr<EA>& A, const VecExpr<EB>& b, double tol = -1.0) {
         return lstsq_qr(Matrix<T, L>(A), Vector<T>(b), tol);
     };
  
+    /// @brief Least-squares solution of `A * X = B` via QR decomposition.
+    /// @param A System's matrix.
+    /// @param B RHS matrix.
+    /// @param tol Rank-detection tolerance.
+    /// @return `LstsqMatResult` object.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqMatResult<T, L> lstsq_qr(const MatExpr<EA>& A, const MatExpr<EB>& B, double tol = -1.0) {
         return lstsq_qr(Matrix<T, L>(A), Matrix<T, L>(B), tol);
@@ -223,11 +233,21 @@ namespace linalg {
         return { std::move(X), std::move(residuals), rank };
     };
  
+    /// @brief SVD-based least-squares solution of `A * x = b`.
+    /// @param A System's matrix.
+    /// @param b RHS vector.
+    /// @param tol Singular-value cutoff for rank detection.
+    /// @return `LstsqVecResult` object.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqVecResult<T> lstsq_svd(const MatExpr<EA>& A, const VecExpr<EB>& b, double tol = -1.0) {
         return lstsq_svd(Matrix<T, L>(A), Vector<T>(b), tol);
     };
 
+    /// @brief SVD-based least-squares solution of `A * X = B`.
+    /// @param A System's matrix.
+    /// @param B RHS matrix.
+    /// @param tol Singular-value cutoff for rank detection.
+    /// @return `LstsqMatResult` object: minimum-norm solution `X`, per-column `residuals`, numerical `rank`.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqMatResult<T, L> lstsq_svd(const MatExpr<EA>& A, const MatExpr<EB>& B, double tol = -1.0) {
         return lstsq_svd(Matrix<T, L>(A), Matrix<T, L>(B), tol);
@@ -259,11 +279,23 @@ namespace linalg {
         else throw std::invalid_argument("Unrecognised driver: '" + driver + "' .");
     };
 
+    /// @brief Least-squares solution of `A * x = b`.
+    /// @param A System's matrix.
+    /// @param b RHS vector.
+    /// @param driver LS algorithm (`qr` or `svd`)
+    /// @param tol Tolerance.
+    /// @return Corresponding `LstsqVecResult` structure.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqVecResult<T> lstsq(const MatExpr<EA>& A, const VecExpr<EB>& b, std::string driver = "svd", double tol = -1.0) {
         return lstsq(Matrix<T, L>(A), Vector<T>(b), driver, tol);
     };
 
+    /// @brief Least-squares solution of `A * X = B`.
+    /// @param A System's matrix.
+    /// @param b RHS matrix.
+    /// @param driver LS algorithm (`qr` or `svd`)
+    /// @param tol Tolerance.
+    /// @return Corresponding `LstsqMatResult` structure.
     template<typename T, Layout L, typename EA, typename EB>
     LstsqMatResult<T, L> lstsq(const MatExpr<EA>& A, const MatExpr<EB>& B, std::string driver = "svd", double tol = -1.0) {
         return lstsq(Matrix<T, L>(A), Matrix<T, L>(B), driver, tol);
@@ -297,6 +329,10 @@ namespace linalg {
         return P;
     };
 
+    /// @brief Moore-Penrose pseudoinverse.
+    /// @param A `m * n` input matrix.
+    /// @param tol Tolerance (setting negative value triggers auto-tolerance).
+    /// @return `n * m` pseudoinverse matrix.
     template<typename T, Layout L, typename E>
     Matrix<T, L> pinv(const MatExpr<E>& e, double tol = -1.0) { return pinv(Matrix<T, L>(e), tol); };
 };

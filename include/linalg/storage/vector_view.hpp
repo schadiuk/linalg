@@ -4,22 +4,22 @@
 
 namespace linalg {
     /// @brief View class.
-    /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+    /// @tparam T Scalar element type. Supports: `float`, `double`, and their `std::complex` counterparts.
     /// @tparam Mutable Mutability indicator.
     template<typename T, bool Mutable = false>
     class VectorView : public VecExpr<VectorView<T, Mutable>> {
         using Ptr = std::conditional_t<Mutable, T*, const T*>;
     public:
-        /// @brief Read-only constructor from a const Vector.
+        /// @brief Read-only constructor from a const `Vector`.
 		/// @param vec The vector.
         explicit VectorView(const Vector<T>& vec) requires (!Mutable) : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
-        /// @brief Constructor from a non-const Vector.
+        /// @brief Constructor from a non-const `Vector`.
 		/// @param vec The vector.
         explicit VectorView(Vector<T>& vec) requires Mutable : data_(vec.data()), size_(vec.size()), stride_(1) {};
     
         /// @brief Raw-pointer constructor.
-        /// @param data Pointer to element (0,0) of this view's logical extent.
+        /// @param data Pointer to element `(0)` of this view's logical extent.
         /// @param size Physical size.
         /// @param stride Stride of the parent allocation.
         VectorView(Ptr data, size_t size, size_t stride = 1) : data_(data), size_(size), stride_(stride) {};
@@ -36,13 +36,18 @@ namespace linalg {
         /// @brief Checked element indexation, read-only.
 		/// @param i Index.
 		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
-		/// @note Both operator() and operator[] exist, and are equivalent.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
         /// @note Methods, analoguous to `at()`, were removed.
         const T& operator()(size_t i) const {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];
         };
     
+        /// @brief Checked element indexation, read-only.
+		/// @param i Index.
+		/// @return Element given by `Vec[i]` if such exists, undefined otherwise.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
+        /// @note Methods, analoguous to `at()`, were removed.
         const T& operator[](size_t i) const {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];
@@ -51,13 +56,18 @@ namespace linalg {
         /// @brief Checked element indexation, allows writing to mutable views.
 		/// @param i Index.
 		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
-		/// @note Both operator() and operator[] exist, and are equivalent.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
         /// @note Methods, analoguous to `at()`, were removed.
         T& operator()(size_t i) requires Mutable {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];
         };
     
+        /// @brief Checked element indexation, read-only.
+		/// @param i Index.
+		/// @return Element given by `Vec[i]` if such exists, undefined otherwise.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
+        /// @note Methods, analoguous to `at()`, were removed.
         T& operator[](size_t i) requires Mutable {
             BOUNDS_CHECK(i < size_);
             return data_[i * stride_];

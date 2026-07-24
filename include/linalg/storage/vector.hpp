@@ -12,7 +12,7 @@ namespace linalg {
 	template<typename EV, typename EM> struct VgemExpr;
 
 	/// @brief Main vector storage class.
-	/// @tparam T scalar element type. Supports: float, double, and their std::complex counterparts.
+	/// @tparam T scalar element type. Supports: `float`, `double`, and their `std::complex` counterparts.
 	template<typename T = DefaultScalar> requires Scalar<T>
 	class Vector : public VecExpr<Vector<T>> {
 	private:
@@ -80,13 +80,10 @@ namespace linalg {
 					// Build the replacement into a brand-new buffer (reads against the still-intact old `data_` happen entirely before the swap), then move it in.
 					data_ = fill_construct(total, [&e](size_t i) { return static_cast<T>(e(i)); });
 				}
-				else {
-					for (size_t i = 0; i < total; ++i) data_[i] = e(i);
-				};
+				else for (size_t i = 0; i < total; ++i) data_[i] = e(i);
 			}
 			else {
-				parallel_for(total, PARALLEL_THRESHOLD_SIMPLE,
-					[this, &e](size_t start, size_t end) {
+				parallel_for(total, PARALLEL_THRESHOLD_SIMPLE, [this, &e](size_t start, size_t end) {
 						for (size_t i = start; i < end; ++i) {
 							data_[i] = e(i);
 						};
@@ -119,54 +116,64 @@ namespace linalg {
 		const T* data() const { return data_.data(); };
 
 		/// @brief Safe element access, as operator() does not check if index is valid.
-        /// @pre Vector<T> Vec.
         /// @param i Index.
         /// @return Element given by `Vec(i)`.
-        /// @throws linalg::detail::BoundsError.
+        /// @throws `linalg::detail::BoundsError`.
 		T& at(size_t i) {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		/// @brief Safe element access, as operator() does not check if index is valid.
+        /// @param i Index.
+        /// @return Element given by `Vec(i)`.
+        /// @throws `linalg::detail::BoundsError`.
 		const T& at(size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
-        // Unchecked element indexation. NOTE: both operator [] and () are provided
-		LINALG_INLINE
 		/// @brief Unchecked element indexation.
 		/// @param i Index.
 		/// @return Element given by `Vec[i]` if such exists, undefined otherwise.
-		/// @note Both operator() and operator[] exist, and are equivalent.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
+		LINALG_INLINE
 		T& operator[](size_t i) {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		/// @brief Unchecked element indexation.
+		/// @param i Index.
+		/// @return Element given by `Vec[i]` if such exists, undefined otherwise.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
 		LINALG_INLINE
 		const T& operator[](size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
-		LINALG_INLINE
 		/// @brief Unchecked element indexation.
 		/// @param i Index.
 		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
-		/// @note Both operator() and operator[] exist, and are equivalent.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
+		LINALG_INLINE
 		T& operator()(size_t i) {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
+		/// @brief Unchecked element indexation.
+		/// @param i Index.
+		/// @return Element given by `Vec(i)` if such exists, undefined otherwise.
+		/// @note Both `operator()` and `operator[]` exist, and are equivalent.
 		LINALG_INLINE
 		const T& operator()(size_t i) const {
 			BOUNDS_CHECK(i < size_);
 			return data_[i];
 		};
 
-		// std::vector-like iterators
+		// `std::vector`-like iterators
 		auto begin() { return data_.begin(); };
 		auto end() { return data_.end(); };
 		auto begin() const { return data_.begin(); };

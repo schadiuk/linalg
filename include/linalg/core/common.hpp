@@ -19,18 +19,16 @@ namespace linalg {
 
     /// @brief Conjugate helper function.
 	/// @param z Complex number.
-	/// @return Complex conjugate of z.
+	/// @return Complex conjugate of `z`.
     template<typename T>
     T conj(const T& z) {
-	    if constexpr (std::is_same_v<T, std::complex<float>> ||
-		    std::is_same_v<T, std::complex<double>>) {
+	    if constexpr (std::is_same_v<T, std::complex<float>> || std::is_same_v<T, std::complex<double>>) {
 		    return std::conj(z);
-	    }
-		else return z;
+	    } else return z;
     };
 
-    /// @brief Generator of random scalars of type T.
-	/// @return A complex number with real and imaginary parts distributed uniformly on [-1, 1].
+    /// @brief Generator of random scalars of type `T`.
+	/// @return A complex number with real and imaginary parts distributed uniformly on [-1, 1).
     template<typename T>
     T randomScalar() {
 	    thread_local static std::random_device rd;

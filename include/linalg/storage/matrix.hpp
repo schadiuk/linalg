@@ -14,7 +14,7 @@ namespace linalg {
     template<typename E1, typename E2> struct MatSubExpr;
 
     /// @brief Main matrix storage class.
-    /// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+    /// @tparam T Scalar element type. Supports: `float`, `double`, and their `std::complex` counterparts.
     /// @tparam L Layout.
     template<typename T = DefaultScalar, Layout L = Layout::RowMajor> requires Scalar<T>
     class Matrix : public MatExpr<Matrix<T, L>> {
@@ -98,8 +98,7 @@ namespace linalg {
                     };
                 }
                 else if constexpr (L == Layout::RowMajor) {
-                    parallel_for(rows, 1,
-                        [p, stride, &arr](size_t start_row, size_t end_row) {
+                    parallel_for(rows, 1, [p, stride, &arr](size_t start_row, size_t end_row) {
                             for (size_t i = start_row; i < end_row; ++i) {
                                 const auto& src_row = arr[i];
                                 for (size_t j = 0; j < cols; ++j) {
@@ -109,8 +108,7 @@ namespace linalg {
                         });
                 }
                 else {
-                    parallel_for(cols, 1,
-                        [p, stride, &arr](size_t start_col, size_t end_col) {
+                    parallel_for(cols, 1, [p, stride, &arr](size_t start_col, size_t end_col) {
                             for (size_t j = start_col; j < end_col; ++j) {
                                 for (size_t i = 0; i < rows; ++i) {
                                     ::new (static_cast<void*>(p + j * stride + i)) T(arr[i][j]);
@@ -140,8 +138,7 @@ namespace linalg {
                     };
                 }
                 else if constexpr (L == Layout::RowMajor) {
-                    parallel_for(rows, 1,
-                        [p, stride, &arr](size_t start_row, size_t end_row) {
+                    parallel_for(rows, 1, [p, stride, &arr](size_t start_row, size_t end_row) {
                             for (size_t i = start_row; i < end_row; ++i) {
                                 for (size_t j = 0; j < cols; ++j) {
                                     ::new (static_cast<void*>(p + i * stride + j)) T(arr[i][j]);
@@ -150,8 +147,7 @@ namespace linalg {
                         });
                 }
                 else {
-                    parallel_for(cols, 1,
-                        [p, stride, &arr](size_t start_col, size_t end_col) {
+                    parallel_for(cols, 1, [p, stride, &arr](size_t start_col, size_t end_col) {
                             for (size_t j = start_col; j < end_col; ++j) {
                                 for (size_t i = 0; i < rows; ++i) {
                                     ::new (static_cast<void*>(p + j * stride + i)) T(arr[i][j]);
@@ -182,8 +178,7 @@ namespace linalg {
                 };
             }
             else if constexpr (L == Layout::RowMajor) {
-                parallel_for(rows, 1,
-                    [this, &arr](size_t start_row, size_t end_row) {
+                parallel_for(rows, 1, [this, &arr](size_t start_row, size_t end_row) {
                         for (size_t i = start_row; i < end_row; ++i) {
                             for (size_t j = 0; j < cols; ++j) {
                                 (*this)(i, j) = arr[i][j];
@@ -192,8 +187,7 @@ namespace linalg {
                     });
             }
             else {
-                parallel_for(cols, 1,
-                    [this, &arr](size_t start_col, size_t end_col) {
+                parallel_for(cols, 1, [this, &arr](size_t start_col, size_t end_col) {
                         for (size_t j = start_col; j < end_col; ++j) {
                             for (size_t i = 0; i < rows; ++i) {
                                 (*this)(i, j) = arr[i][j];
@@ -233,8 +227,7 @@ namespace linalg {
             }
             else {
                 if constexpr (L == Layout::RowMajor) {
-                    parallel_for(this->rows_, 1,
-                        [this, &e](size_t start_row, size_t end_row) {
+                    parallel_for(this->rows_, 1, [this, &e](size_t start_row, size_t end_row) {
                             for (size_t i = start_row; i < end_row; ++i) {
                                 for (size_t j = 0; j < this->cols_; ++j) {
                                     (*this)(i, j) = e(i, j);
@@ -243,8 +236,7 @@ namespace linalg {
                         });
                 }
                 else {
-                    parallel_for(this->cols_, 1,
-                        [this, &e](size_t start_col, size_t end_col) {
+                    parallel_for(this->cols_, 1, [this, &e](size_t start_col, size_t end_col) {
                             for (size_t j = start_col; j < end_col; ++j) {
                                 for (size_t i = 0; i < this->rows_; ++i) {
                                     (*this)(i, j) = e(i, j);
@@ -268,8 +260,6 @@ namespace linalg {
 		};
 
         /// @brief Converion to row-major array.
-        /// @tparam rows 
-        /// @tparam cols 
         /// @return 2D `std::array`.
         template<size_t rows, size_t cols>
         std::array<std::array<T, cols>, rows> to_array() const {
@@ -299,41 +289,49 @@ namespace linalg {
         T* data() { return data_.data(); };
         const T* data() const { return data_.data(); };
 
-        /// @brief Safe element access, as operator() does not check if index is valid.
-        /// @pre Matrix<T, L> A.
+        /// @brief Safe element access, as `operator()` does not check if index is valid.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Element with given indices `A(i, j)`.
-        /// @throws linalg::detail::BoundsError.
+        /// @throws `linalg::detail::BoundsError` exception.
         T& at(size_t i, size_t j) {
             BOUNDS_CHECK(i < rows_ && j < cols_);
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
  
+        /// @brief Safe element access, as `operator()` does not check if index is valid.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)`.
+        /// @throws `linalg::detail::BoundsError` exception.
         const T& at(size_t i, size_t j) const {
             BOUNDS_CHECK(i < rows_ && j < cols_);
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
 
-        LINALG_INLINE
         /// @brief Unchecked element indexation.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Element with given indices `A(i, j)` if such is legal, undefined otherwise. 
+        LINALG_INLINE
         T& operator()(size_t i, size_t j) {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
 
+        /// @brief Unchecked element indexation.
+        /// @param i Row index.
+        /// @param j Column index.
+        /// @return Element with given indices `A(i, j)` if such is legal, undefined otherwise.
         LINALG_INLINE
         const T& operator()(size_t i, size_t j) const {
             size_t idx = (L == Layout::RowMajor) ? (i * stride_ + j) : (j * stride_ + i);
             return data_[idx];
         };
 
-        /// @brief Static factory method for creating n * n identity matrix.
+        /// @brief Static factory method for creating `n * n` identity matrix.
         /// @param n Dimension.
         /// @return The identity matrix of size `n`.
         static Matrix identity(size_t n) {
@@ -342,19 +340,19 @@ namespace linalg {
             return mat;
         };
 
-        /// @brief Static factory method for creating m * n matrix initialised with all ones.
+        /// @brief Static factory method for creating `m * n` matrix initialised with all ones.
         /// @param m Row count.
         /// @param n Column count.
         /// @return The matrix.
         static Matrix ones(size_t m, size_t n) { return Matrix(m, n, T(1)); };
 
-        /// @brief Static factory method for creating m * n matrix initialised with all zeros.
+        /// @brief Static factory method for creating `m * n` matrix initialised with all zeros.
         /// @param m Row count.
         /// @param n Column count.
         /// @return The matrix.
         static Matrix zeros(size_t m, size_t n) { return Matrix(m, n, T(0)); };
 
-        /// @brief Static factory method for creating m * n matrix initialised with random entries.
+        /// @brief Static factory method for creating `m * n` matrix initialised with random entries.
         /// @param m Row count.
         /// @param n Column count.
         /// @return The matrix.
@@ -461,7 +459,6 @@ namespace linalg {
             return *this;
         };
 
-    private:
         // Data storage and dimensions
         std::vector<T, UninitAlignedAllocator<T>> data_;
         size_t rows_, cols_, stride_;

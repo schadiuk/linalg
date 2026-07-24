@@ -8,8 +8,8 @@ namespace linalg {
     // `uplo` == 'U': `A = U^H * U`, `U` upper-triangular.
     template<typename T, Layout LL>
     struct CholeskyResult {
-        Matrix<T, LL> factor;
-        char uplo;
+        Matrix<T, LL> factor;   // Triangular Cholesky factor.
+        char uplo;              // Triangular flag (either `U` or `L`).
     };
 
     namespace detail {
@@ -341,6 +341,11 @@ namespace linalg {
         return CholeskyResult<T, L>{ std::move(W), lower ? 'L' : 'U' };
     };
 
+    /// @brief Positive-definite triangular factor: Cholesky factorisation.
+    /// @param A Matrix to be decomposed.
+    /// @param uplo Upper/lower triangular form.
+    /// @return `CholeskyResult` structure.
+    /// @throw `std::runtime_error` whenever non-HPD matrix `A` is encountered.
     template<typename T, Layout L, typename E>
     CholeskyResult<T, L> potrf(const MatExpr<E>& e, char uplo = 'L') { return potrf(Matrix<T, L>(e), uplo); };
 

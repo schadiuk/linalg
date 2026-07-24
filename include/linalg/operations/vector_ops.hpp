@@ -173,6 +173,8 @@ namespace linalg {
     
     template<typename E> auto imag(const VecExpr<E>& e) { return apply([](auto x){ return std::imag(x); }, e); };
 
+    template<typename E> auto cplx(const VecExpr<E>& e) { return apply([](auto x){ return DefaultScalar(x); }, e); };
+
     template<typename E> auto conj(const VecExpr<E>& e) { return apply([](auto x){ return linalg::conj(x); }, e); };
 
     /// @brief Sum reduction.

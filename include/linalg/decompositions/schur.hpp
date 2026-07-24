@@ -6,11 +6,11 @@ namespace linalg {
     // Publicly-visible Schur decomposition package.
     template<Layout LL = Layout::RowMajor>
     struct SchurResult {
-        Matrix<DefaultScalar, LL> T; // Upper-triangular Schur factor.
-        Matrix<DefaultScalar, LL> Q; // Unitary matrix of Schur vectors.
+        Matrix<DefaultScalar, LL> T;    // Upper-triangular Schur factor.
+        Matrix<DefaultScalar, LL> Q;    // Unitary matrix of Schur vectors.
         Vector<DefaultScalar> eigvals;
-        Vector<double> balance_scale; // Per-index scaling factors.
-        Vector<size_t> balance_perm; // Permutation for balancing.
+        Vector<double> balance_scale;   // Per-index scaling factors.
+        Vector<size_t> balance_perm;    // Permutation for balancing.
         bool balanced{false};
     };
 
@@ -412,6 +412,11 @@ namespace linalg {
         return res;
     };
 
+    /// @brief General Schur decomposition.
+    /// @param A Input matrix (complex-valued).
+    /// @param compute_vectors `Q` matrix accumulation flag.
+    /// @param balance Eigenvalue balancing flag.
+    /// @return Corresponding `SchurResult` structure.
     template<Layout L = Layout::RowMajor>
     SchurResult<L> schur(const Matrix<double, L>& A, bool compute_vectors = true, bool balance = true) {
         const size_t n = A.rows();
@@ -421,6 +426,11 @@ namespace linalg {
         return schur(Ac, compute_vectors, balance);
     };
 
+    /// @brief General Schur decomposition.
+    /// @param A Input matrix (complex-valued).
+    /// @param compute_vectors `Q` matrix accumulation flag.
+    /// @param balance Eigenvalue balancing flag.
+    /// @return Corresponding `SchurResult` structure.
     template<Layout L = Layout::RowMajor, typename E>
     SchurResult<L> schur(const MatExpr<E>& A_expr, bool compute_vectors = true, bool balance = true) {
         using raw_t = std::remove_cvref_t<decltype(A_expr.self()(0, 0))>;
@@ -447,11 +457,17 @@ namespace linalg {
         return schur<L>(A, /*compute_vectors=*/false, /*balance=*/true).eigvals;
     };
     
+    /// @brief Compute the eigenvalues of a given matrix.
+    /// @param A Input square matrix.
+    /// @return Non-ordered vector, consisting of eigenvalues, each repeated according to its multiplicity.
     template<Layout L = Layout::RowMajor>
     Vector<std::complex<double>> eigenvalues(const Matrix<double, L>& A) {
         return schur<L>(A, false, true).eigvals;
     };
     
+    /// @brief Compute the eigenvalues of a given matrix.
+    /// @param A Input square matrix.
+    /// @return Non-ordered vector, consisting of eigenvalues, each repeated according to its multiplicity.
     template<Layout L = Layout::RowMajor>
     Vector<std::complex<double>> eigenvalues(const Matrix<std::complex<double>, L>& A) {
         return schur<L>(A, false, true).eigvals;

@@ -163,7 +163,12 @@ namespace linalg {
 	};
 	
 	template<typename Alpha, typename EX, typename T>
-	LINALG_INLINE void axpy(Alpha alpha, const VecExpr<EX>& x, VectorView<T, true>& y) {
+	LINALG_INLINE 
+	/// @brief Scaled vector addition.
+	/// @param alpha Scaling factor.
+	/// @param x Vector operand.
+	/// @param y Vector view to be updated (via `y += alpha * x`).
+	void axpy(Alpha alpha, const VecExpr<EX>& x, VectorView<T, true>& y) {
 		const auto& xx = x.self();
 		BOUNDS_CHECK(xx.size() == y.size());
 		const T a = static_cast<T>(alpha);
@@ -218,7 +223,13 @@ namespace linalg {
 	};
 	
 	template<typename Alpha, typename EX, typename Beta, typename T>
-	LINALG_INLINE void axpby(Alpha alpha, const VecExpr<EX>& x, Beta beta, VectorView<T, true>& y) {
+	LINALG_INLINE
+	/// @brief General two-scalar vector addition.
+	/// @param alpha Scaling factor (that of `x`).
+	/// @param beta Scaling factor (of `y`).
+	/// @param x Free vector operand.
+	/// @param y Vector view to be updated (via `y = alpha * x + beta * y`).
+	void axpby(Alpha alpha, const VecExpr<EX>& x, Beta beta, VectorView<T, true>& y) {
 		const auto& xx = x.self();
 		BOUNDS_CHECK(xx.size() == y.size());
 		const T a = static_cast<T>(alpha);
@@ -255,7 +266,11 @@ namespace linalg {
 	};
 	
 	template<typename Alpha, typename T>
-	LINALG_INLINE void scal(Alpha alpha, VectorView<T, true>& x) {
+	LINALG_INLINE 
+	/// @brief In-place scaling.
+	/// @param alpha Scaling factor.
+	/// @param x Vector view to be scaled.
+	void scal(Alpha alpha, VectorView<T, true>& x) {
 		const T a = static_cast<T>(alpha);
 		const size_t n = x.size();
 		if (x.stride() == 1) {
@@ -285,7 +300,11 @@ namespace linalg {
 	};
 	
 	template<typename Alpha, typename T, Layout L, bool Trans, bool Conj>
-	LINALG_INLINE void scal(Alpha alpha, MatrixView<T, L, Trans, Conj, true>& A) {
+	LINALG_INLINE 
+	/// @brief In-place scaling.
+	/// @param alpha Scaling factor.
+	/// @param x Matrix view to be scaled.	
+	void scal(Alpha alpha, MatrixView<T, L, Trans, Conj, true>& A) {
 		const T a = static_cast<T>(alpha);
 		const size_t m = A.rows(), nc = A.cols();
 		parallel_for(m, PARALLEL_THRESHOLD_SIMPLE, [&A, a, nc](size_t rs, size_t re) {
@@ -478,7 +497,7 @@ namespace linalg {
 	/// @brief Sum of absolute values.
 	/// @param x Vector expression.
 	/// @return The sum.
-	/// @note Follows BLAS convention for complex types: `abs(re(x)) + abs(im(x))`.
+	/// @note Follows BLAS convention for complex types: `abs(real(x)) + abs(imag(x))`.
 	double asum(const VecExpr<EX>& x) {
 		const auto& xx = x.self();
 		const size_t n = xx.size();
@@ -582,7 +601,7 @@ namespace linalg {
 	
 	template<typename T>
     LINALG_INLINE
-	/// @brief Givens rotation parameters.
+	/// @brief Givens rotation parameters: `(c, s)` such that  `[[c, s], [-s, c]] * [a, b] = [r, 0]`.
 	void rotg(T& a, T& b, T& c, T& s) requires std::is_floating_point_v<T> {
 			// Finds (c, s) such that  [[c, s], [-s, c]] * [a, b] = [r, 0].
 			// On exit: a <- r, b <- 0, c <- cos(theta), s <- sin(theta).
@@ -625,7 +644,7 @@ namespace linalg {
 
 	template<typename T>
     LINALG_INLINE
-	/// @brief Apply a Givens rotation.
+	/// @brief Applies a Givens rotation in-place.
 	void rot(Vector<T>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
@@ -642,7 +661,9 @@ namespace linalg {
     };
 
     template<typename T>
-    LINALG_INLINE void rot(VectorView<T, true>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
+    LINALG_INLINE 
+	/// @brief Applies a Givens rotation in-place.
+	void rot(VectorView<T, true>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s](size_t rs, size_t re) {
@@ -655,7 +676,9 @@ namespace linalg {
     };
 
     template<typename T>
-    LINALG_INLINE void rot(Vector<T>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
+    LINALG_INLINE 
+	/// @brief Applies a Givens rotation in-place.
+	void rot(Vector<T>& x, VectorView<T, true>& y, T c, T s) requires std::is_floating_point_v<T> {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s](size_t rs, size_t re) {
@@ -668,13 +691,16 @@ namespace linalg {
     };
  
     template<typename T>
-    LINALG_INLINE void rot(VectorView<T, true>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> { rot(y, x, c, -s); };
+    LINALG_INLINE 
+	/// @brief Applies a Givens rotation in-place.
+	void rot(VectorView<T, true>& x, Vector<T>& y, T c, T s) requires std::is_floating_point_v<T> { rot(y, x, c, -s); };
  
-    // Complex rot uses complex s and real c.
-    // Applies: x[i] <- c * x[i] + s * y[i]
-    //          y[i] <- -conj(s) * x[i] + c * y[i]
     template<typename T>
     LINALG_INLINE 
+	/// @brief Applies complex Givens rotation in-place.
+	/// @note Transforms: 	`x[i] <- c * x[i] + s * y[i]` and
+    ///         			`y[i] <- -conj(s) * x[i] + c * y[i]`
+	/// @note Rotation uses complex `s` and real `c`.
 	void rot(Vector<std::complex<T>>& x, Vector<std::complex<T>>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
@@ -689,7 +715,12 @@ namespace linalg {
     };
  
     template<typename T>
-    LINALG_INLINE void rot(VectorView<std::complex<T>, true>& x, VectorView<std::complex<T>, true>& y, T c, std::complex<T> s) {
+    LINALG_INLINE
+	/// @brief Applies complex Givens rotation in-place.
+	/// @note Transforms: 	`x[i] <- c * x[i] + s * y[i]` and
+    ///         			`y[i] <- -conj(s) * x[i] + c * y[i]`
+	/// @note Rotation uses complex `s` and real `c`.
+	void rot(VectorView<std::complex<T>, true>& x, VectorView<std::complex<T>, true>& y, T c, std::complex<T> s) {
         BOUNDS_CHECK(x.size() == y.size());
         const size_t n = x.size();
         parallel_for(n, PARALLEL_THRESHOLD_SIMPLE, [&x, &y, c, s, cs = conj(s)](size_t rs, size_t re) {

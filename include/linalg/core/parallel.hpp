@@ -53,7 +53,7 @@ namespace linalg {
             std::future<return_type> res = task->get_future();
             {
                 std::unique_lock<std::mutex> lock(queue_mutex_);
-                if (stop_) throw std::runtime_error("enqueue on stopped ThreadPool");
+                if (stop_) throw std::runtime_error("Thread pool: enqueue on stopped ThreadPool.");
                 tasks_.emplace([task]() { (*task)(); });
             }
             condition_.notify_one();

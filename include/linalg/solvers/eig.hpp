@@ -3,7 +3,7 @@
 #include <linalg/blas/level3.hpp>
 
 namespace linalg {
-    // Result of eig: right and/or left eigenvectors of `A = Q*T*Q^H`.
+    // Result of `eig`: right and/or left eigenvectors of `A = Q * T * Q^H`.
     template<typename T, Layout LL>
     struct EigResult {
         Vector<T> eigenvalues;
@@ -175,7 +175,7 @@ namespace linalg {
         };
     };
     
-    /// @brief Computes eigenvectors of `A` given its complex Schur decomposition `A = Q*T*Q^H`.
+    /// @brief Computes eigenvectors of `A` given its complex Schur decomposition `A = Q * T * Q^H`.
     /// @param T_schur Complex upper-triangular Schur factor.
     /// @param Q_schur Complex unitary matrix of Schur vectors.
     /// @param right Compute right eigenvectors.

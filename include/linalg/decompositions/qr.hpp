@@ -9,12 +9,12 @@ namespace linalg {
     // Publicly-visible QR decomposition package.
     template<typename T, Layout LL>
     struct QRResult {
-        Matrix<T, LL> P;
-        Matrix<T, LL> Q;
-        Matrix<T, LL> R;
-        Vector<size_t> piv;
-        int rank;
-        bool pivoted;
+        Matrix<T, LL> P;    // Permutation matrix.
+        Matrix<T, LL> Q;    // Orthonormal factor.
+        Matrix<T, LL> R;    // Upper triangular factor.
+        Vector<size_t> piv; // Pivot indices (for pivoted QR).
+        int rank;           // Estimated numerical rank (pivoted only; -1 otherwise).
+        bool pivoted;       // Boolean flag.
     };
 
     namespace detail {
@@ -280,8 +280,7 @@ namespace linalg {
         Matrix<T, L> R(r_rows, n, T(0));
         for (size_t i = 0; i < r_rows && i < m; ++i)
             LINALG_VECTORIZE
-            for (size_t j = i; j < n; ++j)
-                R(i, j) = W(i, j);
+            for (size_t j = i; j < n; ++j) R(i, j) = W(i, j);
         // Q accumulation.
         Matrix<T, L> Q(0, 0);
         if (mode != QRMode::R) {
@@ -307,6 +306,12 @@ namespace linalg {
         };
     };
 
+    /// @brief Householder QR decomposition.
+    /// @param A Matrix to be decomposed.
+    /// @param mode Algorithm mode (default is Reduced).
+    /// @param pivoting Pivoting flag for rank-revealing factorisation.
+    /// @param tol Rank-detection tolerance.
+    /// @return `QRResult` structure.
     template<typename T, Layout L, typename E>
     QRResult<T, L> qr(const MatExpr<E>& e) {
         return qr(Matrix<T, L>(e));
@@ -319,12 +324,6 @@ namespace linalg {
     QRResult<T, L> qr_reduced(const Matrix<T, L>& A) { 
         return qr(A, QRMode::Reduced,  false);
     };
-    /// @brief Householder QR decomposition.
-    /// @param A Matrix to be decomposed.
-    /// @param mode Algorithm mode (default is Reduced).
-    /// @param pivoting Pivoting flag for rank-revealing factorisation.
-    /// @param tol Rank-detection tolerance.
-    /// @return `QRResult` structure.
 
     /// @brief Completed QR factorisation.
     /// @param A Matrix to be decomposed.

@@ -180,7 +180,7 @@ The library supports a substantial quantity of common mathematical functions, de
 | --- | --- | --- |
 | Arithmetic | `abs`, `pow`, `sqrt`, `exp`, `log` | Functions are "inherited" from the standard C++, and are applied pointwise. |
 | Nearest integer | `floor`, `ceil`, `round` |
-| Complex-specific | `real`, `imag`, `conj` | Could be used for real/imaginary part extraction when assigned. |
+| Complex-specific | `real`, `imag`, `conj`, `cplx` | Could be used for upcasting or real/imaginary part extraction when assigned. |
 | Trigonometric | `sin`, `asin`, `cos`, `acos`, `tan`, `atan` |
 | Hyperbolic | `sinh`, `cosh`, `tanh`|
 | Reductions | Common: `sum`. Vector-specific: `dot`, `dotc` | cf. optimised [BLAS `asum`](#blas) for vectors. |
@@ -362,12 +362,23 @@ res.T             // Upper-triangular factor.
 res.Q             // Unitary matrix of Schur vectors.
 res.eigvals       // Vector containing eigenvalues.
 res.balance_scale // Per-index scaling factors.
-res.balance.perm  // Permutation encoded for balancing.
+res.balance_perm  // Permutation encoded for balancing.
 res.balanced      // Boolean flag.
 
 Vector<DefaultScalar> = eigenvalues(A); // Convenience function.
 ```
 
+The decomposition serves as the input type for a general eigensolver:
+```cpp
+auto res = schur(A, true, true);
+
+auto T = res.T; auto Q = res.Q;
+auto eigres = eig(T, Q, /*right=*/true, /*left=*/true);
+
+eigres.VL           // Left eigenvectors.
+eigres.VR           // Right eigenvectors.
+eigres.eigenvalues  // Eigenvalues (copied from the input SchurResult).
+```
 ---
 ### Bidiagonal and singular value decompositions
 The two decompositions are closely related: the former performs unitary reduction to bidiagonal form, while the latter deals with iterative diagonalisation of the obtained bidiagonal matrix. Precisely, a sequence of Householder reflectors reduces the input matrix $A$ to a real bidiagonal $B$, $A = UBV^H$, with $U, V$ unitary. The $B$ marix is then diagonalised, which yields the desired identity: 

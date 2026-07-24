@@ -292,6 +292,10 @@ namespace linalg {
         return res;
     };
 
+    /// @brief Singular Value Decomposition: `A = U * diag(S) * V^H`.
+    /// @param A Matrix to be decomposed.
+    /// @return `SVDResult` structure.
+    /// @throw `std::runtime_error` when GKR iteration fails to converge.
     template<typename T, Layout L, typename E>
     SVDResult<T, L> svd(const MatExpr<E>& e) {
         return svd(Matrix<T, L>(e));

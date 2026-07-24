@@ -6,16 +6,15 @@ namespace linalg {
     // The structure bundles the publicly-visible decomposition (P, L, U) together with the internal packed representation used by the solvers.
     template<typename T, Layout LL>
     struct LUResult {
-        Matrix<T, LL> P; // Permutation matrix: P * A = L * U.
-        Matrix<T, LL> L; // m*min(m,n) unit lower triangular factor.
-        Matrix<T, LL> U; // min(m,n)*n upper triangular factor.
-        Matrix<T, LL> packed; // In-place storage: strict lower L, upper U.
-        Vector<size_t> piv; // piv[j] = row swapped with row j at step j.
+        Matrix<T, LL> P;        // Permutation matrix: P * A = L * U.
+        Matrix<T, LL> L;        // `m * min(m,n)` unit lower triangular factor.
+        Matrix<T, LL> U;        // `min(m,n) * n` upper triangular factor.
+        Matrix<T, LL> packed;   // In-place storage: strict lower `L`, upper `U`.
+        Vector<size_t> piv;     // `piv[j]` encodes row swapped with row `j` at step `j`.
     };
 
-    constexpr size_t LU_BLOCK = 64;
-
     namespace detail {
+        constexpr size_t LU_BLOCK = 64;
         // Blocked LU with partial pivoting. Algorithm per block column k:
         // 1. Unblocked panel LU on A[k:m, k:k+kb] with partial pivoting. Row swaps are applied to the full row (0:n) so previously-factored blocks are kept consistent.
         // 2. Panel trsm: solve L_panel * U12 = A[k:k+kb, k+kb:n].
@@ -238,6 +237,9 @@ namespace linalg {
         };
     };
  
+    /// @brief LU factorisation.
+    /// @param A Matrix to be decomposed.
+    /// @return `LUResult` structure: the decomposition (P, L, U) together with packed representation.
     template<typename T, Layout L, typename E>
     LUResult<T, L> lu(const MatExpr<E>& e) {
         return lu(Matrix<T, L>(e));

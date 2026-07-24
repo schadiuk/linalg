@@ -656,6 +656,14 @@ namespace linalg {
         detail::trsm_impl<T, L>(side, uplo, trans, diag, alpha, A_expr.self(), B.data(), B.stride(), B.rows(), B.cols());
     };
  
+    /// @brief In-place triangular solution of `A * X = alpha * B`.
+    /// @param side Left/right multiplication (i.e. `op(A) * X` or `X * op(A)`)
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param diag Unit/non-unit diagonal indicator.
+    /// @param alpha Scaling factor of `B`.
+    /// @param A_expr LHS matrix.
+    /// @param B RHS matrix (overwritten by the solution).
     template<typename T, Layout L, typename EM>
     void trsm(char side, char uplo, char trans, char diag, T alpha,  const MatExpr<EM>& A_expr, MatrixView<T, L, false, false, true>& B) {
         const bool left = (side == 'L' || side == 'l');
@@ -827,6 +835,13 @@ namespace linalg {
         detail::syrk_impl<T, L>(uplo, trans, alpha, A_expr, beta, C.data(), C.stride(), N, false);
     };
  
+    /// @brief Symmetric rank-k update.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param alpha Scaling factor (that of product).
+    /// @param A_expr Independent matrix operand.
+    /// @param beta Scaling factor of `C`.
+    /// @param C Matrix to be updated (via `C = alpha * op(A) * op(A)^T + beta * C`).
     template<typename T, Layout L, typename EA>
     void syrk(char uplo, char trans, T alpha, const MatExpr<EA>& A_expr, T beta, MatrixView<T, L, false, false, true>& C) {
         const bool notrans = (trans == 'N' || trans == 'n');
@@ -851,6 +866,14 @@ namespace linalg {
         detail::syrk_impl<T, L>(uplo, trans, static_cast<T>(alpha), A_expr, static_cast<T>(beta), C.data(), C.stride(), N, true);
     };
  
+    /// @brief Hermitian rank-k update.
+    /// @param uplo Upper/lower triangle of A.
+    /// @param trans Transposition flag.
+    /// @param alpha Scaling factor (that of product).
+    /// @param A_expr Independent matrix operand.
+    /// @param beta Scaling factor of `C`.
+    /// @param C Matrix to be updated (via `C = alpha * op(A) * op(A)^H + beta * C`).
+    /// @note Both of the scaling factors are real.
     template<typename T, Layout L, typename EA>
     void herk(char uplo, char trans, detail::real_type_t<T> alpha, const MatExpr<EA>& A_expr, detail::real_type_t<T> beta,  MatrixView<T, L, false, false, true>& C) {
         const bool notrans = (trans == 'N' || trans == 'n');

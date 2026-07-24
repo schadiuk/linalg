@@ -7,7 +7,7 @@ namespace linalg {
 	class Matrix;
 
 	/// @brief View class supporting zero-overhead transposition and complex conjugation.
-	/// @tparam T Scalar element type. Supports: float, double, and their std::complex counterparts.
+	/// @tparam T Scalar element type. Supports: `float`, `double`, and their `std::complex` counterparts.
 	/// @tparam L Layout.
 	/// @tparam Trans Transposition flag.
 	/// @tparam Conj Conjugation flag.
@@ -16,20 +16,20 @@ namespace linalg {
 	class MatrixView : public MatExpr<MatrixView<T, L, Trans, Conj, Mutable>> {
 		using Ptr = std::conditional_t<Mutable, T*, const T*>;
 	public:
-        /// @brief Read-only constructor from a const Matrix.
-		/// @param mat Constant Matrix.
+        /// @brief Read-only constructor from a const `Matrix`.
+		/// @param mat Constant matrix.
     	explicit MatrixView(const Matrix<T, L>& mat) requires (!Mutable) : data_(mat.data()), rows_(mat.rows()), cols_(mat.cols()),
         		stride_(L == Layout::RowMajor ? mat.cols() : mat.rows()) {};
  
-    	/// @brief Constructor from non-const (mutable) Matrix.
-		/// @param mat The Matrix object.
+    	/// @brief Constructor from non-const (mutable) `Matrix`.
+		/// @param mat The matrix object.
     	explicit MatrixView(Matrix<T, L>& mat) requires Mutable : data_(mat.data()), rows_(mat.rows()), cols_(mat.cols()),
           		stride_(L == Layout::RowMajor ? mat.cols() : mat.rows()) {};
 
     	/// @brief Raw-pointer constructor.
-    	/// @param data Pointer to element (0,0) of this view's logical extent.
-    	/// @param rows Physical row count (before applying Trans).
-    	/// @param cols Physical column count (before applying Trans).
+    	/// @param data Pointer to element `(0,0)` of this view's logical extent.
+    	/// @param rows Physical row count (before applying `Trans`).
+    	/// @param cols Physical column count (before applying `Trans`).
     	/// @param stride Leading dimension of the parent allocation.
     	MatrixView(Ptr data, size_t rows, size_t cols, size_t stride) : data_(data), rows_(rows), cols_(cols), stride_(stride) {};
 		
@@ -51,11 +51,11 @@ namespace linalg {
 			return jj * stride_ + ii;
 		};
 
-		/// @brief Safe element access, as operator() does not check if index is valid.
+		/// @brief Safe element access, as `operator()` does not check if index is valid.
         /// @param i Row index.
         /// @param j Column index.
         /// @return Element with given indices `A(i, j)`.
-        /// @throws linalg::detail::BoundsError.
+        /// @throws `linalg::detail::BoundsError`.
 		T at(size_t i, size_t j) const {
 			BOUNDS_CHECK(i < rows() && j < cols());
 			return Conj ? conj(data_[index(i, j)]) : data_[index(i, j)];

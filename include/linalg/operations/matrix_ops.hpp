@@ -186,6 +186,8 @@ namespace linalg {
 
     template<typename E> auto imag(const MatExpr<E>& e) { return apply([](auto x){ return std::imag(x); }, e); };
 
+    template<typename E> auto cplx(const MatExpr<E>& e) { return apply([](auto x){ return DefaultScalar(x); }, e); };
+
     template<typename E> auto conj(const MatExpr<E>& e) { return apply([](auto x){ return linalg::conj(x); }, e); };
 
     /// @brief Trace reduction.

@@ -40,7 +40,8 @@ namespace linalg {
     // Vectorisation macros.
     #if defined(LINALG_CLANG)
     #define LINALG_VECTORIZE _Pragma("clang loop vectorize(enable) interleave(enable)")
-    #define LINALG_UNROLL(N) _Pragma("clang loop unroll_count(" #N ")")
+    #define LINALG_PRAGMA_CLANG(x) _Pragma(#x)
+    #define LINALG_UNROLL(N) LINALG_PRAGMA_CLANG(clang loop unroll_count(N))
     #elif defined(LINALG_GCC)
     #define LINALG_PRAGMA(x) _Pragma(#x)
     #define LINALG_VECTORIZE LINALG_PRAGMA(GCC ivdep)
@@ -151,8 +152,8 @@ namespace linalg {
             return static_cast<T*>(::operator new(n * sizeof(T), std::align_val_t{Align}));
         };
     
-        void deallocate(T* p, std::size_t n) noexcept {
-            ::operator delete(p, n * sizeof(T), std::align_val_t{Align});
+        void deallocate(T* p, std::size_t) noexcept {
+            ::operator delete(p, std::align_val_t{Align});
         };
     };
     
