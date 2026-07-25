@@ -2,7 +2,7 @@
 
 // Self-contained test harness: EXPECT()/EXPECT_NEAR() with file/line reports.
 
-#include <include/linalg.hpp>
+#include <linalg.hpp>
 #include <iostream>
 #include <sstream>
 #include <cstdint>
@@ -21,23 +21,23 @@ namespace test {
     };
 
     #define EXPECT(cond) do { \
-        ::lgtest::g_checks++; \
-        if (!(cond)) ::lgtest::report_fail(#cond, __FILE__, __LINE__); \
+        ::test::g_checks++; \
+        if (!(cond)) ::test::report_fail(#cond, __FILE__, __LINE__); \
     } while(0)
 
     #define EXPECT_NEAR(a, b, tol) do { \
-        ::lgtest::g_checks++; \
+        ::test::g_checks++; \
         auto _a = (a); auto _b = (b); auto _t = (tol); \
         double _d = std::abs(_a - _b); \
         if (!(_d <= _t)) { \
             std::ostringstream _ss; \
             _ss << #a " ~= " #b " (|" << _d << "| > " << _t << ")"; \
-            ::lgtest::report_fail(_ss.str(), __FILE__, __LINE__); \
+            ::test::report_fail(_ss.str(), __FILE__, __LINE__); \
         } \
     } while(0)
 
     #define RUN_TEST(fn) do { \
-        ::lgtest::g_current_test = #fn; \
+        ::test::g_current_test = #fn; \
         fn(); \
     } while(0)
 
