@@ -57,7 +57,7 @@ namespace linalg {
 
         /// @brief Constructor from a `MatrixView` object.
         /// @param v The view.
-        explicit MatViewExpr(const MatrixView<T, L, Trans, Conj>& v) : view(v) {};
+        explicit MatViewExpr(const MatrixView<T, L, Trans, Conj, Mutable>& v) : view(v) {};
 
         /// @brief Conversion operator.
         /// @note  Implicit conversion to non-owning view, with mutable -> const allowed.
