@@ -6,6 +6,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <functional>
+#include <type_traits>
 
 namespace linalg {
     /// @brief Threshold for parallelisation of non-intensive operations.
@@ -47,6 +48,22 @@ namespace linalg {
         template<typename F>
         auto enqueue(F&& f) -> std::future<decltype(f())> {
             using return_type = decltype(f());
+            if (in_worker_thread_) {
+                std::promise<return_type> prom;
+                std::future<return_type> fut = prom.get_future();
+                try {
+                    if constexpr (std::is_void_v<return_type>) {
+                        f();
+                        prom.set_value();
+                    } else {
+                        prom.set_value(f());
+                    };
+                } catch (...) {
+                    prom.set_exception(std::current_exception());
+                };
+                return fut;
+            };
+
             auto task = std::make_shared<std::packaged_task<return_type()>>(
                 std::forward<F>(f)
             );
@@ -82,6 +99,7 @@ namespace linalg {
             if (num_threads == 0) num_threads = 4;
             for (size_t i = 0; i < num_threads; ++i) {
                 workers_.emplace_back([this] {
+                    in_worker_thread_ = true;
                     while (true) {
                         std::function<void()> task;
                         {
@@ -107,6 +125,8 @@ namespace linalg {
         std::mutex queue_mutex_;
         std::condition_variable condition_;
         bool stop_;
+        // Set to true for the lifetime of any thread spawned by this pool; used by enqueue() to detect reentrant (nested) submission and run inline instead of deadlocking.
+        static inline thread_local bool in_worker_thread_ = false;
     };
 
     /// @brief Helper function for parallel execution of a lambda.
