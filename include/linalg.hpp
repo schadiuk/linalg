@@ -34,6 +34,8 @@
 #include <linalg/solvers/lstsq.hpp>
 #include <linalg/solvers/eig.hpp>
 
+#include <linalg/io.hpp>
+/*
 #include <string>
 #include <sstream>
 #include <iomanip>
@@ -129,4 +131,4 @@ namespace linalg {
     std::ostream& operator<<(std::ostream& os, const Matrix<TT, LL>& mat) {
         return print(os, mat, default_format());
     };
-};
+};*/
