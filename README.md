@@ -11,6 +11,8 @@ An educational header-based C++ linear algebra library revolving around lazy exp
 - [Operations](#operationsutility-functions)
 - [BLAS](#blas)
 - [Matrix decompositions](#decompositions)
+- [Formatting](#output-formatting)
+- [Testing](#testing)
 - [Benchmarking](#benchmarking)
 ---
 ## Overview
@@ -38,19 +40,15 @@ The library features rich documentation: Doxygen-like comment blocks (natively s
 
 *Note:* the format chosen is Markdown, supported by GitHub and a number of modern IDEs and editors (including [VS Code](https://code.visualstudio.com/docs/languages/markdown) - the one used in development). For easier understanding of the algorithms, it is recommended not to rely on GitHub website's rendering of formulas (some of which may be parsed incorrectly).
 
-
 ---
 ## Prerequisites
 | Requirement | Minimum |
 |-------------|---------|
 | C++ standard| C++20. |
 | Compiler | GCC 12+, Clang 14+, MSVC 19.30+. |
-| Architecture | x86-64, ARM64, or any scalar target. |
 
-No third-party assets needed, as the standard library is the only dependency. For installation, copy the `linalg/` directory and include the umbrella header:
-```cpp
-#include <linalg/linalg.hpp>
-```
+No third-party assets needed, as the standard library is the only dependency. For installation, copy the `linalg/` directory and include the umbrella header.
+
 Compile with C++20 and enable optimisations for best performance. Below are sample `g++` commands:
 
 - Recommended set of flags (reproducible).
@@ -384,7 +382,7 @@ eigres.eigenvalues  // Eigenvalues (copied from the input SchurResult).
 The two decompositions are closely related: the former performs unitary reduction to bidiagonal form, while the latter deals with iterative diagonalisation of the obtained bidiagonal matrix. Precisely, a sequence of Householder reflectors reduces the input matrix $A$ to a real bidiagonal $B$, $A = UBV^H$, with $U, V$ unitary. The $B$ marix is then diagonalised, which yields the desired identity: 
 $$A = U B V^H = U (U' \Sigma V'^H) V^H = (UU') \cdot \Sigma \cdot (VV')^H$$
 
-Here $\Sigma = diag(s_0, \ldots, s_{k-1})$, with singular values sorted as $s_0 \geq s_1 \geq \cdots \geq 0$.
+Here $\Sigma = diag(s_0, \ldots, s_{k-1})$, with singular values sorted in descending order: $s_0 \geq s_1 \geq \cdots \geq 0$.
 
 - Typical bidiagonalisation workflow is as follows:
   ```cpp
@@ -398,10 +396,10 @@ Here $\Sigma = diag(s_0, \ldots, s_{k-1})$, with singular values sorted as $s_0 
 
   Using the function with `accumulate_uv` parameter set to `false` allows to compute the singular values directly using fast `dqds` algorithm (Differential Quotient-Difference with shifts):
   ```cpp
-  // (Example is continued)
   Vector<double> = dqds(res.d, res.e);
   ```
-- SVD computation is performed in example below:
+  
+- SVD computation is performed as follows:
   ```cpp
   auto res = svd(A);  // Note that exclusively thin SVD is performed.
 
@@ -412,16 +410,76 @@ Here $\Sigma = diag(s_0, \ldots, s_{k-1})$, with singular values sorted as $s_0 
 
 *Note:* a thorough treatise of the algorithms can be found [here](/reference/SVD.md).
 
+---
+## Output formatting
+
+The library supports printing `Matrix` and `Vector` objects via the usual `operator<<`:
+```cpp
+linalg::Vector<double> v{1.5, -2.5, 3.0};
+std::cout << v; // [ 1.500 -2.500  3.000]
+```
+
+By default, this operator uses 3 digits of precision, fixed point notation and `a + bi` complex number formatting. All three are configurable process-wide by the means of passing `IOFormat` objects to `set_default_format`:
+```cpp
+linalg::set_default_format(linalg::IOFormat{
+    /*precision=*/6,
+    /*scientific=*/false,
+    /*complex_as_pair=*/false
+});
+```
+
+### Per-stream overrides
+
+An independent way of changing output formatting is using stream manipulators:
+```cpp
+std::cout << linalg::setprecision(6) << mat;          // 6 fractional digits.
+std::cout << linalg::scientific << vec;               // Scientific style.
+std::cout << linalg::fixed << vec;                    // Back to fixed-point.
+std::cout << linalg::complex_as_pair << complex_vec;  // Ordered pair.
+std::cout << linalg::complex_as_sum << complex_vec;   // Back to sum style.
+```
+
+Manipulators can be combined and appear in any order relative to the object being printed:
+ 
+```cpp
+std::cout << linalg::scientific << linalg::setprecision(2) << mat;
+```
+ 
+*Note*. The override is attached to the stream, not to any particular `<<` call. Once applied it stays in effect for every subsequent `linalg` print on that stream, until changed again. Furthermore, `linalg::setprecision` / `linalg::scientific` / `linalg::fixed` are distinct from `std::setprecision` / `std::scientific` / `std::fixed` - they only affect `linalg`-specific output on that stream, not the stream's built-in numeric formatting.
+
+---
+## Testing
+
+The `linalg` library has a comprehensive, self-contained testing suite that exercises virtually all public API surface. The assets are enclosed in a separate namespace and are isolated in [`tests/`](/tests/) directory. They are orchestrated by a single `main.cpp` runner that invokes each stage in turn, prints progress and reports a final summary containing total checks, failures and wall-clock time.
+
+The test harness is designed as header-only and free from external dependencies, the test suite can be compiled with a single command.
+```bash
+# As compiled from the repository root:
+g++ -std=c++20 -Iinclude -Itests tests/main.cpp -o main
+```
+
+Typical output ends with a summary of the form:
+```
+Checks run : 9624
+Failures   : 0
+Time       : 0.126746s
+ALL PASSED
+```
+
+*Note:* `test_stability.cpp` subjects the library to a collection of classical pathological matrices and verifies that the algorithms perform correctly (or *degrade gracefully* faute de mieux). All checks assert finiteness by the means of `std::isfinite`-like wrappers.
 
 ---
 ## Benchmarking
 
 The library was benchmarked using a console-based suite, with results provided in a dedicated [text file](/benchmark/benchmark.txt).
 
-> **Hardware:** 12-thread machine with 64-byte cache line.
+> **Hardware:** 12-core machine with 64-byte cache line.
 
 > **Build.** Aggressive optimisation, namely:
- `g++ -std=c++20 -march=native -mtune=native -O3 -ffast-math -funroll-loops -ftree-vectorize -Iinclude benchmark/benchmark.cpp -o main`.
+```bash
+g++ -std=c++20 -march=native -mtune=native -O3 -ffast-math -funroll-loops -ftree-vectorize -Iinclude benchmark/benchmark.cpp -o main
+```
+
 
 ---
 ### Global summary
@@ -445,7 +503,7 @@ Every operation performed on `double` with arithmetic intensity below 1.0 FLOP/b
 ---
 ### Layout comparison
 
-A series of experiments was run to establish layout-unbiasedness of `gemm` kernels:
+A series of experiments was run to establish layout agnosticism of `gemm` kernels. The averaged results are below:
 
 | Problem size | `RowMajor` (GFLOP/s) | `ColMajor` (GFLOP/s) | Difference |
 | --- | --- | --- | --- |
