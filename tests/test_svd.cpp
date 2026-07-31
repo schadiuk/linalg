@@ -90,23 +90,23 @@ void t_dqds() {
 void run_bidiag_svd_tests() {
     RUN_TEST((std::bind(t_bidiag_impl<double, Layout::RowMajor>, 8, 5)));
     RUN_TEST((std::bind(t_bidiag_impl<double, Layout::RowMajor>, 80, 70)));
-    RUN_TEST((std::bind(t_bidiag_impl<double, Layout::RowMajor>, 40, 80))); // wide -> A^H path
+    RUN_TEST((std::bind(t_bidiag_impl<double, Layout::RowMajor>, 40, 80))); // Wide -> A^H path.
     RUN_TEST((std::bind(t_bidiag_impl<double, Layout::ColMajor>, 8, 5)));
     RUN_TEST((std::bind(t_bidiag_impl<double, Layout::ColMajor>, 80, 70)));
 
     RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::RowMajor>, 8, 5)));
     RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::RowMajor>, 80, 70)));
-    RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::RowMajor>, 40, 80))); // wide -> A^H path
+    RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::RowMajor>, 40, 80)));
     RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::ColMajor>, 8, 5)));
     RUN_TEST((std::bind(t_bidiag_impl<std::complex<double>, Layout::ColMajor>, 80, 70)));
 
     RUN_TEST((std::bind(t_svd_impl<double, Layout::RowMajor>, 8, 5)));
     RUN_TEST((std::bind(t_svd_impl<double, Layout::RowMajor>, 80, 70)));
     RUN_TEST((std::bind(t_svd_impl<double, Layout::RowMajor>, 40, 80)));
-    RUN_TEST((std::bind(t_svd_impl<double, Layout::ColMajor>, 8, 5)));
+    RUN_TEST((std::bind(t_svd_impl<double, Layout::ColMajor>, 40, 80)));
     RUN_TEST((std::bind(t_svd_impl<std::complex<double>, Layout::RowMajor>, 8, 5)));
     RUN_TEST((std::bind(t_svd_impl<std::complex<double>, Layout::RowMajor>, 50, 40)));
-    RUN_TEST((std::bind(t_svd_impl<std::complex<double>, Layout::ColMajor>, 8, 5)));
+    RUN_TEST((std::bind(t_svd_impl<std::complex<double>, Layout::ColMajor>, 50, 40)));
 
     RUN_TEST(t_dqds);
 };

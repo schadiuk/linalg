@@ -67,8 +67,8 @@ void t_cholesky_not_pd() {
 
 void run_cholesky_tests() {
     RUN_TEST((std::bind(t_cholesky_impl<double, Layout::RowMajor>, 5)));
-    RUN_TEST((std::bind(t_cholesky_impl<double, Layout::RowMajor>, 150)));
-    RUN_TEST((std::bind(t_cholesky_impl<double, Layout::ColMajor>, 5)));
+    RUN_TEST((std::bind(t_cholesky_impl<double, Layout::RowMajor>, 128)));
+    RUN_TEST((std::bind(t_cholesky_impl<double, Layout::ColMajor>, 64)));
     RUN_TEST((std::bind(t_cholesky_impl<std::complex<double>, Layout::RowMajor>, 5)));
     RUN_TEST((std::bind(t_cholesky_impl<std::complex<double>, Layout::RowMajor>, 140)));
     RUN_TEST((std::bind(t_cholesky_impl<std::complex<double>, Layout::ColMajor>, 5)));

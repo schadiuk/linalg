@@ -73,10 +73,10 @@ void run_qr_tests() {
     RUN_TEST((std::bind(t_qr_reduced_complete_r<double, Layout::RowMajor>, 6, 4)));
     RUN_TEST((std::bind(t_qr_reduced_complete_r<double, Layout::RowMajor>, 4, 6)));
     RUN_TEST((std::bind(t_qr_reduced_complete_r<double, Layout::RowMajor>, 80, 70)));
-    RUN_TEST((std::bind(t_qr_reduced_complete_r<double, Layout::ColMajor>, 6, 4)));
+    RUN_TEST((std::bind(t_qr_reduced_complete_r<double, Layout::ColMajor>, 70, 80)));
     RUN_TEST((std::bind(t_qr_reduced_complete_r<std::complex<double>, Layout::RowMajor>, 6, 4)));
     RUN_TEST((std::bind(t_qr_reduced_complete_r<std::complex<double>, Layout::RowMajor>, 70, 65)));
-    RUN_TEST((std::bind(t_qr_reduced_complete_r<std::complex<double>, Layout::ColMajor>, 5, 5)));
+    RUN_TEST((std::bind(t_qr_reduced_complete_r<std::complex<double>, Layout::ColMajor>, 65, 70)));
     RUN_TEST((t_qr_pivoted_rank_deficient<double, Layout::RowMajor>));
     RUN_TEST((t_qr_pivoted_rank_deficient<std::complex<double>, Layout::ColMajor>));
 };
